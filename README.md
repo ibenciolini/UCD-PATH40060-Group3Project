@@ -7,6 +7,8 @@ from [Petralia et al. (Cell, 2020)](https://doi.org/10.1016/j.cell.2020.10.044) 
 the CPTAC/CHOP paediatric brain cancer dataset, publicly available on
 [cBioPortal](https://www.cbioportal.org/study/summary?id=brain_cptac_2020).
 
+Link to the html-rendered .Rmd file with the entire analysis: [Analysis_BrainCPTAC2020.html](https://ibenciolini.github.io/UCD-PATH40060-Group3Project/Analysis_BrainCPTAC2020.html)
+
 **Dataset at a glance**
 
 | Feature | Value |
