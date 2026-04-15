@@ -52,8 +52,6 @@ propagation (STRING v12, α = 0.7, igraph) and computes the Adjusted Rand Index
 between proteomics- and mutation-derived subtypes to quantify how much biology
 proteomics captures beyond genomics.
 
----
-
 ## Repository Structure
 
 ```
