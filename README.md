@@ -4,7 +4,7 @@
 
 This repository loosely reproduces and extends the proteomics-based patient stratification
 from [Petralia et al. (Cell, 2020)](https://doi.org/10.1016/j.cell.2020.10.044) using
-the publicly available CPTAC/CHOP paediatric brain cancer dataset on
+the CPTAC/CHOP paediatric brain cancer dataset, publicly available on
 [cBioPortal](https://www.cbioportal.org/study/summary?id=brain_cptac_2020).
 
 **Dataset at a glance**
