@@ -71,20 +71,6 @@ proteomics captures beyond genomics.
 
 ---
 
-### Option B — GitHub Pages (one-time setup, persistent URL)
-1. Go to your repo → **Settings → Pages**
-2. Set source to **Deploy from a branch**, branch `main`, folder `/ (root)`
-3. After a minute the notebook will be live at:
-   `https://<YOUR_USERNAME>.github.io/<YOUR_REPO>/Analysis_BrainCPTAC2020.html`
-
-### How to regenerate the HTML yourself
-```r
-rmarkdown::render("Analysis_BrainCPTAC2020.Rmd", output_format = "html_document")
-```
-> **Tip:** Set `cache = TRUE` in the `knitr` setup chunk after the first run to skip the slow NMF steps on re-renders.
-
----
-
 ## Reproducing the Analysis
 
 ### 1. Get the data
@@ -133,6 +119,7 @@ BiocManager::install(c(
   "STRINGdb", # for NBS comparison arm
   "igraph"
 ))
+```
 
 ### 3. Run the notebook
 
