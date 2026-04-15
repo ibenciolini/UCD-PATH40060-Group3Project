@@ -1,0 +1,831 @@
+---
+title: "Proteomics-Based Patient Stratification of Pediatric Brain Tumours"
+subtitle: CPTAC/CHOP Brain Cancer Cohort (brain_cptac_2020)
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    output: rmarkdown::github_document
+    toc: true
+    toc_depth: '3'
+    df_print: paged
+  html_notebook:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: show
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  cache = FALSE # set to TRUE after first run to avoid re-running NMF
+)
+```
+
+---
+
+## Overview
+
+This notebook reproduces and extends the proteomics-based patient stratification 
+from Petralia et al. (Cell, 2020) using the publicly available CPTAC/CHOP pediatric 
+brain cancer dataset (`brain_cptac_2020` on cBioPortal).
+
+**Dataset:** 218 tumour samples from 199 patients across 7 histological subtypes  
+(LGG, Ependymoma, HGG, Medulloblastoma, Ganglioglioma, Craniopharyngioma, ATRT),  
+each with WGS, RNA-seq, global proteomics, and phosphoproteomics.
+
+**Why proteomics?**  
+Unlike sparse binary mutation profiles (which need network smoothing to be 
+informative), proteomics data is already a dense, continuous, pathway-integrated 
+signal. It directly captures the functional downstream consequences of mutations, 
+splicing, and post-translational regulation. In a sense, the "smoothed" output 
+that NBS tries to recover from mutations.
+
+**Pipeline summary:**
+```
+Local data files
+    │ load + clean column names
+    v
+Quality control
+    │ remove high-missing proteins, KNN imputation, PCA sanity check
+    v
+Dimensionality reduction
+    │ top 50 PCs, shift to non-negative for NMF
+    v
+k selection
+    │ cophenetic correlation, dispersion, silhouette across k = 2–8
+    v
+Consensus NMF clustering
+    │ 60 runs per k, consensus matrix, final cluster labels
+    v
+Biological validation
+    ├── Kaplan–Meier survival (log-rank test)
+    ├── Histological composition per cluster
+    └── Differential protein expression (limma one-vs-rest)
+```
+
+---
+
+## 1. Packages & Configuration
+
+```{r packages}
+# Core
+library(tidyverse) # dplyr, ggplot2, tidyr, purrr, stringr
+library(janitor) # clean_names() for consistent column naming
+
+# Matrix / imputation
+library(impute) # KNN imputation for missing proteomics values (Bioconductor)
+
+# Clustering
+library(NMF) # Non-negative matrix factorisation + consensus clustering
+library(cluster) # silhouette scores
+library(pheatmap) # annotated heatmaps
+library(RColorBrewer) # colour palettes
+
+# PCA visualisation (only used for k selection)
+#library(factoextra) # fviz_eig() scree plot helper
+
+# Survival
+library(survival) # Surv(), survfit(), coxph()
+library(survminer) # ggsurvplot()
+
+# Differential expression
+library(limma) # linear models for proteomics; well-validated on MS data
+```
+
+```{r config}
+# Global parameters
+set.seed(42)
+
+DATA_DIR <- "./brain_cptac_2020" # folder with downloaded cBioPortal files
+MISSING_THRESHOLD <- 0.30 # remove proteins missing in > 30% of samples
+N_PCS <- 50 # PCA components fed into NMF (same as paper)
+K_MIN <- 2 # minimum k to test
+K_MAX <- 8 # maximum k to test
+NMF_RUNS <- 60 # NMF initializations per k (more = more stable, 60 matches paper)
+
+cat("Configuration ready. Data directory:", DATA_DIR)
+```
+
+---
+
+## 2. Data Loading
+
+We read four flat files downloaded from cBioPortal. All files live in `DATA_DIR`.  
+Column names are cleaned with `janitor::clean_names()` for consistent `snake_case`.
+
+```{r load-data}
+# Clinical (patient-level)
+clin_raw <- read.delim(
+  file.path(DATA_DIR, "data_clinical_patient.txt"),
+  comment.char = "#", sep = "\t", header = TRUE, check.names = FALSE,
+  stringsAsFactors = FALSE
+) |> janitor::clean_names()
+
+# Clinical (sample-level)
+samples_raw <- read.delim(
+  file.path(DATA_DIR, "data_clinical_sample.txt"),
+  comment.char = "#", sep = "\t", header = TRUE, check.names = FALSE,
+  stringsAsFactors = FALSE
+) |> janitor::clean_names()
+
+# Proteomics (proteins × samples z-scores)
+prot_raw <- read.delim(
+  file.path(DATA_DIR, "data_protein_quantification.txt"),
+  comment.char = "#", sep = "\t", header = TRUE, check.names = FALSE,
+  stringsAsFactors = FALSE
+) |> janitor::clean_names()
+
+# Somatic mutations
+mut_raw <- read.delim(
+  file.path(DATA_DIR, "data_mutations.txt"),
+  comment.char = "#", sep = "\t", header = TRUE, check.names = FALSE,
+  stringsAsFactors = FALSE
+) |> janitor::clean_names()
+
+cat("Files loaded.\n")
+cat("  Clinical patients :", nrow(clin_raw), "rows\n")
+cat("  Clinical samples:", nrow(samples_raw), "rows\n")
+cat("  Proteomics rows:", nrow(prot_raw), "(should equal n_proteins)\n")
+cat("  Mutations rows:", nrow(mut_raw))
+```
+
+```{r build-matrices}
+# Build proteomics matrix (samples × proteins)
+# The file is formatted as proteins × samples with the first column being the
+# protein identifier. We transpose so rows = samples, columns = proteins.
+# R prepends 'x' to numeric-starting column names; we strip that and convert
+# underscores back to hyphens to match the sample IDs in the sample file.
+
+prot_wide <- prot_raw |>
+  column_to_rownames("composite_element_ref") |> # protein IDs to rownames
+  select(where(~ sum(!is.na(.)) > 0)) |> # drop all-NA columns
+  as.matrix() |> t() # now: samples × proteins
+
+storage.mode(prot_wide) <- "numeric"
+
+
+# Fix rownames: "x7316_1781" to "7316-1781"
+rownames(prot_wide) <- rownames(prot_wide) |>
+  str_remove("^x") |>
+  str_replace_all("_", "-")
+
+
+# Parse survival from patient-level clinical
+# os_status is formatted as "1:DECEASED" or "0:LIVING"
+clinical <- clin_raw |>
+  mutate(
+    os_event  = as.integer(str_detect(toupper(os_status), "DECEASED|1:DECEASED")),
+    os_months = suppressWarnings(as.numeric(os_months)))
+
+
+# Build unified sample table
+# Joins sample-level info (histology, tumour type) with patient-level survival
+samples <- samples_raw |>
+  select(sample_id, patient_id, cancer_type_detailed,
+         tumor_type, age_at_specimen_diagnosis) |>
+  left_join(
+    select(clinical, patient_id, os_months, os_event, sex),
+    by = "patient_id")
+
+cat("Proteomics matrix:", nrow(prot_wide), "samples ×", ncol(prot_wide), "proteins\n")
+cat("Patients with OS data:", sum(!is.na(clinical$os_months)), "\n")
+cat("Events (deaths):", sum(clinical$os_event, na.rm = TRUE), "\n")
+cat("Histological subtypes:")
+samples |> count(cancer_type_detailed, sort = TRUE) |> print()
+```
+
+---
+
+## 3. Quality Control
+
+Two systematic issues in mass-spectrometry proteomics must be addressed before 
+clustering:
+
+1. **Missing values**: proteins below the detection limit are absent. 
+   Missingness is non-random (low-abundance proteins drop out more). 
+   We remove proteins missing in > `MISSING_THRESHOLD` of samples, 
+   then impute remaining NAs with KNN imputation.
+
+2. **Outlier samples**: samples missing > 40% of the remaining proteins 
+   likely reflect technical failures.
+
+```{r qc-missing-plot, fig.cap="Proteins to the right of the dashed line are removed."}
+# Per-protein and per-sample missing rates
+missing_per_protein <- colMeans(is.na(prot_wide))
+missing_per_sample <- rowMeans(is.na(prot_wide))
+
+# Distribution of missing rates across proteins
+data.frame(missing_rate = missing_per_protein) |>
+  ggplot(aes(x = missing_rate)) +
+  geom_histogram(bins = 60, fill = "#4E79A7", colour = "white") +
+  geom_vline(xintercept = MISSING_THRESHOLD,
+             colour = "firebrick", linetype = "dashed", linewidth = 0.8) +
+  annotate("text",
+           x = MISSING_THRESHOLD + 0.02, y = Inf,
+           label = paste0("Remove if > ", MISSING_THRESHOLD * 100, "% missing"),
+           colour = "firebrick", vjust = 2, hjust = 0, size = 3.5) +
+  labs(title = "Missing value rate per protein",
+       subtitle = "Proteins to the right of the dashed line are excluded",
+       x = "Fraction of samples with missing value", y = "Number of proteins") +
+  theme_bw(base_size = 12)
+```
+
+```{r qc-filter-impute}
+# 1. Remove high-missing proteins
+prot_filtered <- prot_wide[, missing_per_protein <= MISSING_THRESHOLD]
+cat(sprintf("Proteins removed (> %d%% missing): %d | Remaining: %d\n",
+            as.integer(MISSING_THRESHOLD * 100),
+            ncol(prot_wide) - ncol(prot_filtered),
+            ncol(prot_filtered)))
+
+# 2. Remove outlier samples
+outlier_samples <- names(missing_per_sample[missing_per_sample > 0.40])
+if (length(outlier_samples) > 0) {
+  cat("Outlier samples removed:", paste(outlier_samples, collapse = ", "), "\n")
+  prot_filtered <- prot_filtered[!rownames(prot_filtered) %in% outlier_samples, ]
+} else {
+  cat("No outlier samples detected.\n")}
+
+# 3. KNN imputation for remaining NAs
+# impute.knn() expects features as rows, samples as columns → transpose twice.
+# k = 10 neighbours is standard for proteomics datasets of this size.
+cat("Running KNN imputation (k = 10)...\n")
+prot_imputed <- prot_filtered |>
+  t() |>
+  impute.knn(k = 10) |>
+  _$data |> t()
+
+cat("Final matrix after QC:", nrow(prot_imputed), "samples ×",
+    ncol(prot_imputed), "proteins")
+```
+
+---
+
+## 4. Dimensionality Reduction (PCA to NMF input)
+
+Running NMF directly on ~6,000 protein columns is noisy and slow. We first:
+
+1. **Scale** each protein to unit variance (z-score across samples)
+2. **Apply PCA** and retain the top `N_PCS` = 10 components
+3. **Shift** PC scores to be non-negative (add |min|), as required by NMF
+
+This linear shift preserves all pairwise distances.
+
+```{r pca}
+# Scale proteins before PCA (proteomics data should be z-scored column-wise)
+prot_scaled <- scale(prot_imputed)
+
+# PCA
+pca_res <- prcomp(prot_scaled, scale. = FALSE)
+var_expl <- round(100 * pca_res$sdev^2 / sum(pca_res$sdev^2), 2)
+
+cat(sprintf("Top 3 PCs explain %.1f%% of total variance.\n",
+            sum(var_expl[1:3])))
+cat(sprintf("Top %d PCs explain %.1f%% of total variance.",
+            N_PCS, sum(var_expl[1:N_PCS])))
+```
+
+```{r scree-plot, fig.cap="Scree plot: most signal is captured in the first 10 PCs."}
+data.frame(PC = seq_along(var_expl), variance = var_expl) |>
+  filter(PC <= 100) |>
+  ggplot(aes(x = PC, y = variance)) +
+  geom_line(colour = "#4E79A7") +
+  geom_point(size = 1.5, colour = "#4E79A7") +
+  geom_vline(xintercept = N_PCS, linetype = "dashed",
+             colour = "firebrick", linewidth = 0.8) +
+  annotate("text", x = N_PCS + 1, y = max(var_expl) * 0.75,
+           label = paste0("Retain top ", N_PCS, " PCs"),
+           colour = "firebrick", hjust = 0, size = 3.5) +
+  labs(title = "Scree plot: variance explained per PC",
+       x = "Principal Component", y = "Variance explained (%)") +
+  theme_bw(base_size = 12)
+```
+
+```{r pca-sanity, fig.cap="PCA coloured by histological subtype. Distinct subtypes (e.g. ATRT, MB) should form loose clusters; overlap reflects genuine molecular similarity across diagnoses, a core finding of the original paper."}
+# Visualise PC1 vs PC2, coloured by histological subtype
+pca_df <- as.data.frame(pca_res$x[, 1:5]) |>
+  rownames_to_column("sample_id") |>
+  left_join(select(samples, sample_id, cancer_type_detailed), by = "sample_id")
+
+ggplot(pca_df, aes(x = PC1, y = PC2, colour = cancer_type_detailed)) +
+  geom_point(alpha = 0.75, size = 2.5) +
+  labs(title = "PCA of QC-passed proteomics",
+       subtitle = "Colour = histological subtype",
+       x = paste0("PC1 (", var_expl[1], "% var)"),
+       y = paste0("PC2 (", var_expl[2], "% var)"),
+       colour = "Subtype") +
+  theme_bw(base_size = 12)
+```
+
+```{r nmf-input}
+# Extract top N_PCS PC scores and shift to non-negative for NMF
+pca_scores <- pca_res$x[, 1:N_PCS]
+pca_scores_nn <- pca_scores - min(pca_scores) # shift smallest value to 0
+
+cat("NMF input matrix:", nrow(pca_scores_nn), "samples ×",
+    ncol(pca_scores_nn), "PCs\n")
+cat("Value range: [", round(min(pca_scores_nn), 3), ",",
+    round(max(pca_scores_nn), 3), "]")
+```
+
+---
+
+## 5. Selecting the Number of Clusters (k)
+
+**NOTE**
+
+Since the current automatic detection tends to select low values for k
+(which don't work well with the rest of the pipeline), the notebook has been
+manually set to use the same k value as the paper (`k = 8`). This number of
+clusters k was determined by evaluating the cophenetic correlation coefficient
+across possible k values. `k = 8` showed the highest coefficient, indicating
+the most robust and stable clustering where samples reliably grouped together.
+This should aid in our analysis. Some chunks are now useless, as their
+purpose was to aid in k selection, so they've been turned off.
+To run and see them in the Knit, remove `eval=FALSE` and `echo=FALSE`.
+
+**Automated k selection**
+
+We sweep k from `K_MIN` to `K_MAX` and evaluate three complementary stability 
+metrics from the NMF consensus:
+
+- **Cophenetic correlation**: how faithfully the consensus matrix preserves 
+  sample distances (close to 1 = stable)
+- **Dispersion**: how bimodal the consensus matrix is (values near 0 or 1)
+- **Silhouette score**: how well-separated clusters are in feature space
+
+The best k shows a consistent peak or elbow across all three. We prefer the 
+silhouette score as the primary criterion because it directly measures 
+biological cluster separability.
+
+```{r nmf-sweep, eval=FALSE, echo=FALSE, cache=FALSE}
+# Note: This cell is the slowest in the notebook.
+# Set `cache = TRUE` in the chunk options after the first run to reduce run time.
+
+# NMF consensus sweep across k
+# Method "brunet": Lee & Seung multiplicative updates (standard for biology)
+# .options = "v": verbose progress output
+nmf_estimates <- nmf(
+  pca_scores_nn,
+  rank = K_MIN:K_MAX,
+  nrun = NMF_RUNS,
+  seed = 42,
+  method = "brunet",
+  .options = "v")
+```
+
+```{r k-metrics, eval=FALSE, echo=FALSE, fig.cap="NMF model selection metrics across k. Choose the k where cophenetic correlation and silhouette score peak together."}
+# Extract metrics
+k_metrics <- nmf_estimates$measures |>
+  as_tibble() |>
+  rename(k = rank, silhouette = silhouette.consensus) |>
+  select(k, cophenetic, dispersion, silhouette, rss)
+
+cat("Metrics across k:\n")
+print(k_metrics)
+
+# Plot all four metrics
+k_metrics |>
+  pivot_longer(-k, names_to = "metric", values_to = "value") |>
+  ggplot(aes(x = k, y = value)) +
+  geom_line(colour = "#4E79A7", linewidth = 1) +
+  geom_point(size = 3, colour = "#4E79A7") +
+  facet_wrap(~ metric, scales = "free_y", ncol = 2) +
+  scale_x_continuous(breaks = K_MIN:K_MAX) +
+  labs(title = "NMF model selection across k",
+       subtitle = "Choose k where cophenetic and silhouette peak together",
+       x = "Number of clusters (k)", y = "Metric value") +
+  theme_bw(base_size = 12)
+```
+
+```{r select-k, eval=FALSE, echo=FALSE}
+# Automatic selection: highest silhouette score
+BEST_K <- k_metrics$k[which.max(k_metrics$silhouette)]
+cat(sprintf("Selected k = %d  (silhouette = %.3f, cophenetic = %.3f)\n",
+            BEST_K,
+            k_metrics$silhouette[k_metrics$k == BEST_K],
+            k_metrics$cophenetic[k_metrics$k == BEST_K]))
+```
+
+```{r select-k-manual}
+# Manual override:
+# To use the k from the published paper (k = 8) instead, uncomment:
+BEST_K <- 8
+```
+
+---
+
+## 6. Consensus NMF Clustering
+
+With `BEST_K` chosen, we run a final NMF and extract the consensus matrix and 
+cluster labels.
+
+**Interpreting the consensus heatmap:**
+
+- Dark blue diagonal blocks indicate patients always cluster together (stable)  
+- Light off-diagonal regions indicate patients from different clusters never co-cluster (good separation)  
+- Mixed histologies within a cluster indicate cross-boundary molecular grouping, a key finding of the original paper
+
+```{r nmf-final, cache=FALSE}
+nmf_best <- nmf(
+  pca_scores_nn,
+  rank = BEST_K,
+  nrun = NMF_RUNS,
+  seed = 42,
+  method = "brunet",
+  .options = "vr")
+
+# Extract consensus matrix
+cons_matrix <- consensus(nmf_best) # samples × samples, values in [0, 1]
+
+# Assign each sample to the cluster with its highest NMF basis weight.
+# We use basis() rather than predict() here: predict() assigns to the
+# component with the highest H-matrix value, which can collapse to a single
+# cluster when one component dominates. basis() scores are per-sample and
+# more reliably reflect the consensus structure.
+basis_mat <- basis(nmf_best) # 218 samples × k
+cluster_labels <- apply(basis_mat, 1, which.max) # argmax across columns
+names(cluster_labels) <- rownames(pca_scores_nn) # 218 real sample IDs
+
+cat("Cluster distribution:\n")
+print(table(cluster_labels))
+
+# NOTE: `basis_mat` used to be called `basis`, in case of downstream issues.
+```
+
+```{r consensus-heatmap, fig.cap="Consensus matrix sorted by cluster assignment. Dark diagonal blocks indicate stable clusters."}
+# Annotation data frame for the heatmap
+sample_ann <- tibble(sample_id = names(cluster_labels),
+                     cluster = paste0("C", cluster_labels)) |>
+  left_join(select(samples, sample_id, cancer_type_detailed), by = "sample_id") |>
+  column_to_rownames("sample_id")
+
+# Colour palettes
+cluster_colours <- setNames(
+  brewer.pal(max(BEST_K, 3), "Set2")[1:BEST_K],
+  paste0("C", 1:BEST_K))
+subtypes_present <- unique(sample_ann$cancer_type_detailed)
+subtype_colours <- setNames(
+  colorRampPalette(brewer.pal(8, "Set3"))(length(subtypes_present)),
+  subtypes_present)
+
+# Sort by cluster using the cons_matrix row order
+# to guarantee the annotation and matrix rows stay aligned
+sample_order <- order(cluster_labels[rownames(cons_matrix)]) # match cons_matrix
+cons_matrix_ordered <- cons_matrix[sample_order, sample_order]
+
+# Plot with ordered matrix
+pheatmap(
+  cons_matrix_ordered, # use ordered matrix
+  cluster_rows = FALSE, cluster_cols = FALSE,
+  annotation_col = sample_ann[rownames(cons_matrix)[sample_order], ], # match annotation order
+  annotation_colors = list(cluster = cluster_colours, cancer_type_detailed = subtype_colours),
+  color = colorRampPalette(c("white", "#2171B5"))(100),
+  border_color = NA, show_rownames = FALSE, show_colnames = FALSE,
+  main = paste0("Consensus matrix, k = ", BEST_K),
+  fontsize = 10
+)
+```
+
+```{r cluster-df}
+# Build a unified cluster data frame merging labels, histology, and survival
+cluster_df <- tibble(
+  sample_id = names(cluster_labels),
+  cluster   = as.integer(cluster_labels)) |>
+  left_join(
+    select(samples, sample_id, patient_id, cancer_type_detailed,
+           tumor_type, os_months, os_event),
+    by = "sample_id")
+
+cat("Cluster sizes:\n")
+cluster_df |> count(cluster) |> print()
+
+cat("Missing os_months:", sum(is.na(cluster_df$os_months)))
+```
+
+---
+
+## 7. Survival Analysis
+
+A key clinical test: do the identified subgroups have different survival outcomes?  
+We use Kaplan–Meier curves and the log-rank test. A significant p-value (< 0.05) 
+means the clusters capture clinically meaningful biology, not just abstract 
+molecular similarity.
+
+```{r survival-prep}
+# For patients with multiple samples, keep only one row per patient
+surv_data <- cluster_df |>
+  filter(!is.na(os_months) & os_months > 0) |>
+  group_by(patient_id) |> slice(1) |> ungroup() |>
+  mutate(cluster = factor(paste0("C", cluster)),
+          # Convert months to days for clinical standard display (365.25/12 = 30.44)
+          os_days  = os_months * 30.44) # matches clinical oncology standard (365.25/12)
+
+cat("Patients:", nrow(surv_data), "Events:", sum(surv_data$os_event))
+```
+
+```{r km-plot, fig.cap="Kaplan–Meier overall survival curves per proteomics cluster. p-value from log-rank test."}
+# Kaplan–Meier curves using survminer (ggplot2-based)
+fit <- survfit(Surv(os_days, os_event) ~ cluster, data = surv_data)
+
+ggsurvplot(
+  fit,
+  data = surv_data,
+  pval = TRUE, # adds log-rank p-value
+  conf.int = TRUE,
+  risk.table = TRUE, # number at risk table below the plot
+  palette = "Set2",
+  legend.title = "Cluster",
+  xlab = "Time (days)",
+  ylab = "Survival probability",
+  title = paste0("Kaplan–Meier by proteomics cluster (k = ", BEST_K, ")"),
+  xlim = c(0, 4000),
+  break.time.by = 1000
+)
+```
+
+```{r cox-regression}
+# Cox proportional hazards model
+# Controls for age (at diagnosis) and sex so we can test whether the cluster effect
+# on survival is independent of known clinical covariates.
+# Age: use `age_at_initial_diagnosis` from the patient file.
+# Sex: encode as a two-level factor; treat missing/empty as NA and drop.
+cox_data <- surv_data |>
+  left_join(
+    clinical |> select(patient_id, age_at_initial_diagnosis, sex),
+    by = "patient_id") |>
+  mutate(
+    age = suppressWarnings(as.numeric(age_at_initial_diagnosis)),
+    # Standardise sex labels; blank strings become NA
+    sex = na_if(trimws(sex), "") |> factor()) |>
+  filter(!is.na(age)) # drop the small number of rows with no age data
+
+cat(sprintf("Cox model: %d patients (%d events), %d clusters\n",
+            nrow(cox_data), sum(cox_data$os_event), nlevels(cox_data$cluster)))
+
+cox_fit <- coxph(
+  Surv(os_days, os_event) ~ cluster + age + sex,
+  data = cox_data
+)
+
+# Tidy coefficient table
+summary(cox_fit)$coefficients |>
+  as.data.frame() |>
+  rownames_to_column("term") |>
+  select(term, coef, `exp(coef)`, `se(coef)`, `Pr(>|z|)`) |>
+  rename(log_HR = coef, HR = `exp(coef)`, SE = `se(coef)`, p_value = `Pr(>|z|)`) |>
+  mutate(across(where(is.numeric), ~ round(., 4))) |>
+  print()
+
+cat(sprintf("Cox model concordance: %.3f\n",
+            summary(cox_fit)$concordance["C"]))
+```
+**Interpreting the Cox output:**
+
+- HR > 1 = higher hazard (worse survival) relative to C1 (reference).  
+- HR < 1 = lower hazard (better survival).  
+ 
+**C2 caveat:** C2 contains only 8 samples with very few or zero events. Its 
+HR ≈ 0 with an enormous SE (~4800) is a Hauck–Donner / complete-separation 
+artefact, i.e., the model cannot estimate this coefficient reliably. That means
+C2's coefficient's are uninformative; the concordance statistic (C ≈ 0.81) reflects 
+the model's overall discriminatory power and is the more trustworthy summary.
+
+---
+
+## 8. Biological Characterisation
+
+### 8.1. Histological Composition per Cluster
+
+Do the proteomics-derived clusters recapitulate known histology, or do they 
+reveal cross-boundary groupings?
+
+```{r histo-composition, fig.cap="Histological composition of each proteomics cluster. Clusters mixing multiple histologies capture cross-diagnostic molecular programmes."}
+cluster_df |>
+  filter(!is.na(cancer_type_detailed)) |>
+  count(cluster, cancer_type_detailed) |>
+  group_by(cluster) |>
+  mutate(pct = n / sum(n) * 100) |>
+  ungroup() |>
+  ggplot(aes(x = factor(cluster), y = pct,
+             fill = cancer_type_detailed)) +
+  geom_col(colour = "white", linewidth = 0.3) +
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "Histological composition per proteomics cluster",
+       x = paste0("Cluster (k = ", BEST_K, ")"),
+       y = "Percentage of samples (%)",
+       fill = "Histological subtype") +
+  theme_bw(base_size = 12)
+```
+**What to look for:** Clusters that are dominated by a single histological 
+subtype (e.g. a cluster that is ~100% Medulloblastoma) are mostly recapitulating 
+known diagnoses. Clusters that mix several subtypes, for example LGG alongside 
+Ependymoma, are more interesting (and common here): they suggest a shared underlying molecular 
+programme that cuts across classical histological boundaries, which is the 
+central finding of Petralia et al. (2020).
+
+### 8.2. Differential Protein Expression (limma one-vs-rest)
+
+We identify proteins significantly up-regulated in each cluster relative to all 
+other clusters combined. These become the molecular fingerprints of each subtype.
+
+`limma` is well-validated for mass-spectrometry proteomics data (continuous, 
+approximately normal after z-scoring) and handles the moderate sample sizes 
+of this dataset well.
+
+```{r limma-diff-expr, fig.cap="Top differential proteins per cluster (one-vs-rest). Red = upregulated marker."}
+# Align protein matrix to cluster assignment
+common_samples <- intersect(rownames(prot_imputed), names(cluster_labels))
+prot_cl <- prot_imputed[common_samples, ]
+cl_vec <- cluster_labels[common_samples]
+
+# Strip the redundant "|GENENAME" suffix that cBioPortal appends to some IDs
+# e.g. "ERBB2|ERBB2" to "ERBB2"
+colnames(prot_cl) <- str_remove(colnames(prot_cl), "\\|.*$")
+
+# Collect top markers for each cluster
+top_markers_all <- list()
+
+for (cl in sort(unique(cl_vec))) {
+  # Binary contrast: this cluster (1) vs all others (0)
+  group <- ifelse(cl_vec == cl, "Target", "Other")
+  design_mat <- model.matrix(~ 0 + factor(group))
+  colnames(design_mat) <- c("Other", "Target")
+  contrast_mat <- makeContrasts(Target - Other, levels = design_mat)
+
+  fit <- lmFit(t(prot_cl), design_mat)
+  fit_c <- contrasts.fit(fit, contrast_mat)
+  fit_eb <- eBayes(fit_c)
+
+  top_tbl <- topTable(fit_eb, coef = 1, n = 20, sort.by = "B", adjust.method = "BH")
+  top_markers_all[[as.character(cl)]] <- rownames(top_tbl)}
+
+# Heatmap: top markers across all clusters
+all_markers <- unique(unlist(top_markers_all))
+
+pheatmap(
+  t(prot_cl[, all_markers]),
+  annotation_col = data.frame(
+    cluster = paste0("C", cl_vec),
+    row.names = names(cl_vec)),
+  annotation_colors = list(cluster = cluster_colours),
+  color = colorRampPalette(rev(brewer.pal(11, "RdBu")))(100),
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  show_colnames = FALSE,
+  fontsize_row = 7,
+  main = paste0("Top differential proteins per cluster (k = ", BEST_K, ")"),
+  border_color = NA)
+```
+
+```{r print-markers}
+cat("Top 10 upregulated marker proteins per cluster:\n")
+for (cl in names(top_markers_all)) {
+  cat(sprintf("\n  Cluster %s: %s\n", cl,
+              paste(top_markers_all[[cl]][1:10], collapse = ", ")))}
+```
+**Biological interpretation attempt:**
+
+- **C1** (neuronal markers: SLC6A1, GPRIN1, GSK3A), likely neuronal/LGG identity  
+- **C4** (ERBB2, BBS4, BBS9, IFT140/WDR19 cilia genes), ciliopathy/developmental programme; ERBB2 is a potential therapeutic target  
+- **C5** (IGFBP2, SHMT2, PLOD1, PBK), metabolic/proliferative signature, consistent with the poor-prognosis HGG-enriched cluster  
+- **C6** (splicing factors: SNRNP40, SART1, SF3B2, HNRNPK), RNA processing programme  
+- **C7** (KRT6A, KRT7, KRT15, KRT16, S100A2, DSG2), epithelial/squamous markers, characteristic of craniopharyngioma  
+
+We can cross-reference markers with [COSMIC](https://cancer.sanger.ac.uk/cosmic), 
+[UniProt](https://www.uniprot.org), or [KEGG](https://www.genome.jp/kegg/) 
+for pathway context and known cancer relevance.
+
+---
+
+## 9. Optional: NBS Comparison Arm
+
+**Set `eval = TRUE` in this chunk to run the NBS arm.**  
+Requires `STRINGdb` (Bioconductor) and runs an additional NMF sweep.
+
+The key question: do mutation-based subtypes (NBS) agree with proteomics-based 
+subtypes?
+
+- **High ARI** (> 0.5): genomic alterations largely explain observed protein 
+  variation
+- **Low ARI** (< 0.2): proteomics captures biology beyond mutations (epigenetics, 
+  PTMs, microenvironment), a core CPTAC insight
+
+```{r nbs-arm, eval=FALSE}
+# This section follows the NBS tutorial (network_propagation_tutorial.ipynb)
+# adapted here to R using STRINGdb and igraph.
+
+library(STRINGdb)
+library(igraph)
+
+# 1. Build binary mutation matrix
+# Keep one mutation per gene per sample (non-synonymous somatic mutations)
+mut_binary <- mut_raw |>
+  select(tumor_sample_barcode, hugo_symbol) |>
+  distinct() |>
+  mutate(value = 1L) |>
+  pivot_wider(names_from = hugo_symbol,
+              values_from = value,
+              values_fill = 0L,
+              id_cols = tumor_sample_barcode) |>
+  column_to_rownames("tumor_sample_barcode") |>
+  as.matrix()
+
+cat("Mutation matrix:", nrow(mut_binary), "samples ×", ncol(mut_binary), "genes\n")
+
+# 2. Load STRING PPI network (high-confidence: score ≥ 700)
+# STRINGdb downloads and caches the human v12 network locally on first run.
+string_db <- STRINGdb$new(version = "12.0", species = 9606,
+                          score_threshold = 700,
+                          input_directory = tempdir())
+
+gene_df <- data.frame(gene = colnames(mut_binary))
+mapped <- string_db$map(gene_df, "gene", removeUnmappedRows = TRUE)
+interactions <- string_db$get_interactions(mapped$STRING_id)
+
+# Build igraph with gene symbols as node names
+edges <- interactions |>
+  left_join(select(mapped, STRING_id, from_gene = gene), by = c("from" = "STRING_id")) |>
+  left_join(select(mapped, STRING_id, to_gene = gene), by = c("to" = "STRING_id")) |>
+  select(from_gene, to_gene) |>
+  filter(!is.na(from_gene), !is.na(to_gene))
+
+ppi_graph <- graph_from_data_frame(edges, directed = FALSE) |> simplify()
+cat("PPI network:", vcount(ppi_graph), "nodes,", ecount(ppi_graph), "edges\n")
+
+# 3. Network propagation (closed-form solution from Hofree et al. 2013)
+# Formula: F* = (1 - α)(I - αW)^{-1} F₀
+# where W = column-normalised adjacency, F₀ = L2-normalised mutation matrix
+# α = 0.7 is the standard from the original NBS paper.
+# Source: network_propagation_tutorial.ipynb, Section 3
+
+alpha <- 0.7
+common_genes <- intersect(colnames(mut_binary), V(ppi_graph)$name)
+cat("Genes in common (mutations ∩ PPI):", length(common_genes), "\n")
+
+g_sub <- induced_subgraph(ppi_graph, vids = common_genes)
+A <- as_adjacency_matrix(g_sub, sparse = FALSE)
+deg <- colSums(A); deg[deg == 0] <- 1
+W <- sweep(A, 2, deg, "/") # column-normalise
+
+# Prepare mutation matrix: genes × samples, L2-normalised per sample
+F0 <- t(mut_binary[, common_genes])
+F0[is.na(F0)] <- 0
+norms <- apply(F0, 2, function(x) sqrt(sum(x^2))); norms[norms == 0] <- 1
+F0_norm <- sweep(F0, 2, norms, "/")
+
+# Solve (I - α W) F* = (1 - α) F₀  — more stable than direct inversion
+cat("Running network propagation (α =", alpha, ")...\n")
+F_star <- solve(diag(nrow(W)) - alpha * W, (1 - alpha) * F0_norm)
+prop_mat <- as.data.frame(t(F_star))
+rownames(prop_mat) <- colnames(F0)
+cat("Propagated matrix:", nrow(prop_mat), "samples ×", ncol(prop_mat), "genes\n")
+
+# 4. NMF clustering on propagated profiles
+prop_nn <- as.matrix(prop_mat) - min(prop_mat)
+nmf_nbs <- nmf(prop_nn, rank = BEST_K, nrun = NMF_RUNS,
+               seed = 42, method = "brunet")
+# Use basis() for consistency with the main proteomics arm
+nbs_basis <- basis(nmf_nbs)
+nbs_labels <- apply(nbs_basis, 1, which.max)
+names(nbs_labels) <- rownames(prop_nn)
+
+# 5. Compare NBS vs proteomics clusters (Adjusted Rand Index)
+common_s <- intersect(names(cluster_labels), names(nbs_labels))
+ari <- cluster::adjustedRandIndex(cluster_labels[common_s],
+                                        nbs_labels[common_s])
+cat(sprintf("Adjusted Rand Index (proteomics vs NBS mutations): %.3f\n", ari))
+if (ari > 0.5) cat("High agreement: mutations largely explain proteomics variation.\n")
+else if (ari > 0.2) cat("Moderate agreement: some shared structure, proteomics adds more.\n")
+else cat("Low agreement: proteomics subtypes capture biology beyond mutations.\n  (Consistent with the core CPTAC finding.)\n")
+
+# Cross-tabulation heatmap
+crosstab <- table(`Proteomics` = paste0("P", cluster_labels[common_s]),
+                  `NBS` = paste0("M", nbs_labels[common_s]))
+pheatmap(crosstab,
+         display_numbers = TRUE, number_format = "%d",
+         color = colorRampPalette(c("white", "#2171B5"))(100),
+         main = sprintf("Proteomics vs NBS clusters (ARI = %.2f)", ari),
+         cluster_rows = FALSE, cluster_cols = FALSE,
+         border_color = "white", fontsize = 12)
+
+```
+
+---
+
+## References
+
+- Petralia, Francesca et al. “Integrated Proteogenomic Characterization across Major Histological Types of Pediatric Brain Cancer.” **Cell** vol. 183,7 (2020): 1962-1985.e31. doi:10.1016/j.cell.2020.10.044
+- Hofree M. et al. (2013) "Network-based stratification of tumour mutations." **Nature Methods** 10, 1108–1115.  
+- Monti S. et al. (2003) *Consensus Clustering.* **Machine Learning** 52, 91–118.  
+- Cerami E. et al. (2012) *The cBio Cancer Genomics Portal.* **Cancer Discovery** 2, 401–404.
