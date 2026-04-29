@@ -1400,15 +1400,27 @@ Cross-reference candidate genes with OpenTargets to flag which already have appr
 ```{r druggability}
 # Genes to exclude from druggability: pan-cytoskeletal or broadly expressed
 # proteins whose drugs are non-specific chemotherapy, not precision targets.
-DRUGGABILITY_EXCLUDE <- c("TUBB4A", "TUBB2A", "TUBA4A", "TUBB3", "TUBA1A", "ACTB", "ACTG1", "ITGAV")
+DRUGGABILITY_EXCLUDE <- c("TUBB4A", "TUBB2A", "TUBA4A", "TUBB3", "TUBA1A", "ACTB", "ACTG1")
+
+# Top active kinases per cluster from KSEA
+ksea_candidates <- ksea_all |>
+  filter(ksea_z > 1.5, n_substrates >= KSEA_MIN_SUBSTRATES) |>
+  group_by(cluster) |>
+  slice_max(ksea_z, n = 10) |>
+  ungroup() |>
+  pull(kinase) |> unique()
 
 panel_candidates <- dependency_table |>
   filter(q < 0.05, logFC > 0.5) |>
   filter(!gene %in% DRUGGABILITY_EXCLUDE) |>
   group_by(cluster) |>
-  slice_max(abs(coalesce(mean_ess, 0)), n = 10, with_ties = FALSE) |>
+  slice_max(logFC + abs(coalesce(mean_ess, 0)), n = 30, with_ties = FALSE) |>
   ungroup() |>
   pull(gene) |> unique()
+
+# Combine with KSEA with expression-based candidates
+panel_candidates <- union(panel_candidates, ksea_candidates)
+
 cat("Candidate genes for druggability lookup:", length(panel_candidates), "\n")
 
 CT_FILE <- "./data/clinical_target_compact.csv"
@@ -1474,7 +1486,7 @@ druggable_table <- druggable_raw |>
   select(gene, drug_name, chembl_id, max_phase)
 
 cat("Druggable hits returned:", nrow(druggable_table), "\n")
-if (nrow(druggable_table) > 0) print(head(druggable_table, 10))
+if (nrow(druggable_table) > 0) print(head(druggable_table, 30))
 ```
 
 
@@ -1496,7 +1508,7 @@ panel <- dependency_table |>
   left_join(
     druggable_table |>
       group_by(gene) |>
-      summarise(top_drug  = first(drug_name),
+      summarise(top_drug = first(drug_name),
                 max_phase = suppressWarnings(max(max_phase, na.rm = TRUE)),
                 .groups = "drop") |>
       mutate(max_phase = ifelse(is.infinite(max_phase), NA_real_, max_phase)),

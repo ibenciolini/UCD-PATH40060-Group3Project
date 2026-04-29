@@ -1,5 +1,5 @@
-Proteomics-Based Patient Stratification, Molecular Classification, and
-Therapeutic Target Discovery in Pediatric Brain Tumours
+Proteomics-Based Patient Stratification, and Therapeutic Target
+Discovery in Pediatric Brain Tumours
 ================
 2026-04-29
 
@@ -60,17 +60,6 @@ Therapeutic Target Discovery in Pediatric Brain Tumours
     target](#154-selected-proteins-per-target)
   - [15.5 Limitations](#155-limitations)
 - [References](#references)
-
-``` r
-# Resolve common namespace clashes upfront so later chunks don't silently
-# pick the wrong function (e.g. MASS::select vs dplyr::select).
-library(conflicted)
-conflicts_prefer(dplyr::select)
-conflicts_prefer(dplyr::filter)
-conflicts_prefer(dplyr::rename)
-conflicts_prefer(dplyr::slice)
-conflicts_prefer(base::intersect, base::union, base::setdiff)
-```
 
 ------------------------------------------------------------------------
 
@@ -481,7 +470,7 @@ data.frame(missing_rate = missing_per_protein) |>
   theme_bw(base_size = 12)
 ```
 
-<img src="figures/qc-missing-plot-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/qc-missing-plot-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 # 1. Remove high-missing proteins
@@ -685,7 +674,7 @@ data.frame(PC = seq_along(var_expl), variance = var_expl) |>
   theme_bw(base_size = 12)
 ```
 
-<img src="figures/scree-plot-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/scree-plot-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 pca_df <- as.data.frame(pca_res$x[, 1:5]) |>
@@ -702,7 +691,7 @@ ggplot(pca_df, aes(x = PC1, y = PC2, colour = cancer_type_detailed)) +
   theme_bw(base_size = 12)
 ```
 
-<img src="figures/pca-sanity-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/pca-sanity-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ### 4.2 PLS-DA (supervised projection by histology)
 
@@ -721,7 +710,7 @@ plotIndiv(plsda_res, comp = c(1, 2), group = Y,
           title = "PLS-DA of QC-passed proteomics (components 1 vs 2)")
 ```
 
-<img src="figures/plsda-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/plsda-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 set.seed(42)
@@ -733,7 +722,7 @@ plot(perf_res, col = color.mixo(1:3),
      ylab = "Classification error rate (5-fold CV, 10 repeats)")
 ```
 
-<img src="figures/plsda-perf-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/plsda-perf-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 plotLoadings(plsda_res, comp = 1, method = "mean", contrib = "max",
@@ -742,7 +731,7 @@ plotLoadings(plsda_res, comp = 1, method = "mean", contrib = "max",
              size.title = 0.9)
 ```
 
-<img src="figures/plsda-loadings-comp1-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/plsda-loadings-comp1-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 plotLoadings(plsda_res, comp = 2, method = "mean", contrib = "max",
@@ -751,7 +740,7 @@ plotLoadings(plsda_res, comp = 2, method = "mean", contrib = "max",
              size.title = 0.9)
 ```
 
-<img src="figures/plsda-loadings-comp2-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/plsda-loadings-comp2-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ### 4.3 Sparse PLS-DA (feature selection by histology)
 
@@ -771,7 +760,7 @@ tune_splsda$choice.keepX
 ```
 
     ## comp1 comp2 comp3 
-    ##    50    20    15
+    ##    50    15    15
 
 ``` r
 # mixOmics' plot.tune.splsda returns a ggplot, so add the title via ggtitle()
@@ -781,7 +770,7 @@ plot(tune_splsda) +
   theme(plot.title = element_text(size = 12, face = "bold"))
 ```
 
-<img src="figures/splsda-tune-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/splsda-tune-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 optimal_keepX <- tune_splsda$choice.keepX
@@ -794,7 +783,7 @@ plotIndiv(splsda_res, comp = c(1, 2), group = Y,
           title = "sPLS-DA of QC-passed proteomics (sparse component projection)")
 ```
 
-<img src="figures/splsda-fit-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/splsda-fit-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 plotLoadings(splsda_res, comp = 1, method = "mean", contrib = "max",
@@ -803,7 +792,7 @@ plotLoadings(splsda_res, comp = 1, method = "mean", contrib = "max",
              size.title = 0.9)
 ```
 
-<img src="figures/splsda-loadings-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/splsda-loadings-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ### 4.4 UMAP (non-linear sanity check)
 
@@ -824,7 +813,7 @@ ggplot(umap_df, aes(x = V1, y = V2, colour = subtype)) +
   theme_bw(base_size = 12)
 ```
 
-<img src="figures/umap-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/umap-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ------------------------------------------------------------------------
 
@@ -938,7 +927,7 @@ k_metrics |>
   theme_bw(base_size = 12)
 ```
 
-<img src="figures/k-metrics-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/k-metrics-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 # Compute mean cluster purity across k: fraction of the most common histology
@@ -980,7 +969,7 @@ k_metrics |>
   theme(plot.subtitle = element_text(size = 9))
 ```
 
-<img src="figures/select-k-bio-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/select-k-bio-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 cat("Purity by k:\n"); print(purity_by_k)
@@ -1044,10 +1033,10 @@ nmf_best <- nmf(
   .options = "vr")
 ```
 
-    ## Runs: |                                                        Runs: |                                                  |   0%Runs: |                                                        Runs: |==                                                |   5%Runs: |                                                        Runs: |==========                                        |  19%Runs: |                                                        Runs: |============                                      |  24%Runs: |                                                        Runs: |=================                                 |  33%Runs: |                                                        Runs: |=====================                             |  43%Runs: |                                                        Runs: |==========================                        |  52%Runs: |                                                        Runs: |===============================                   |  62%Runs: |                                                        Runs: |====================================              |  71%Runs: |                                                        Runs: |========================================          |  81%Runs: |                                                        Runs: |=============================================     |  90%Runs: |                                                        Runs: |================================================  |  95%Runs: |                                                        Runs: |==================================================| 100%
+    ## Runs: |                                                        Runs: |                                                  |   0%Runs: |                                                        Runs: |==                                                |   5%Runs: |                                                        Runs: |=====                                             |  10%Runs: |                                                        Runs: |                                                        Runs: |==========                                        |  19%Runs: |==========                                        |  19%Runs: |                                                        Runs: |==============                                    |  29%Runs: |                                                        Runs: |===================                               |  38%Runs: |                                                        Runs: |========================                          |  48%Runs: |                                                        Runs: |=============================                     |  57%Runs: |                                                        Runs: |=================================                 |  67%Runs: |                                                        Runs: |======================================            |  76%Runs: |                                                        Runs: |===========================================       |  86%Runs: |                                                        Runs: |================================================  |  95%Runs: |                                                        Runs: |==================================================| 100%
     ## System time:
     ##    user  system elapsed 
-    ##  12.099  13.517  29.025
+    ##  22.798  35.669  38.039
 
 ``` r
 # Extract consensus matrix
@@ -1115,7 +1104,7 @@ pheatmap(cons_matrix_ordered,
   fontsize = 10)
 ```
 
-<img src="figures/consensus-heatmap-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/consensus-heatmap-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ------------------------------------------------------------------------
 
@@ -1241,7 +1230,7 @@ comp_df |>
   theme(axis.text.x = element_text(angle = 12, hjust = 1))
 ```
 
-<img src="figures/histo-composition-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/histo-composition-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 # Reverse view: for each histological diagnosis, how are its patients
@@ -1264,7 +1253,7 @@ comp_df |>
   theme(axis.text.x = element_text(angle = 18, hjust = 1))
 ```
 
-<img src="figures/histo-reverse-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/histo-reverse-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 table(sample_ann$cluster, sample_ann$cancer_type_detailed)
@@ -1399,7 +1388,7 @@ km_plot$table <- km_plot$table +
 grid.arrange(km_plot$plot, km_plot$table, ncol = 1, heights = c(3, 1.2))
 ```
 
-<img src="figures/km-plot-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/km-plot-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 km_fit_months <- survfit(Surv(os_months, os_event) ~ cluster, data = surv_data)
@@ -1649,7 +1638,7 @@ pheatmap(
 )
 ```
 
-<img src="figures/limma-heatmap-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/limma-heatmap-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 cat("Top 10 upregulated marker proteins per cluster:\n")
@@ -1691,7 +1680,7 @@ varImpPlot(rf_fit, n.var = 25,
            cex = 0.85)
 ```
 
-<img src="figures/rf-classification-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/rf-classification-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ------------------------------------------------------------------------
 
@@ -1742,7 +1731,7 @@ ggplot(phos_meta |> filter(!is.na(residue_type)),
   theme_bw(base_size = 12)
 ```
 
-<img src="figures/phos-parse-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/phos-parse-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 # One-vs-rest limma per cluster on the phosphoproteome
@@ -1901,7 +1890,7 @@ if (!is.null(enzsub)) {
 
     ## KSEA results: 258 kinase × cluster rows
 
-<img src="figures/ksea-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/ksea-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ### 14.3 Cluster-marker shortlist (overexpressed proteins)
 
@@ -2059,7 +2048,7 @@ dependency_table |>
   theme_bw(base_size = 12)
 ```
 
-<img src="figures/depmap-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/depmap-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ### 14.5 Druggability annotation (OpenTargets)
 
@@ -2069,19 +2058,31 @@ have approved or clinical-trial drugs.
 ``` r
 # Genes to exclude from druggability: pan-cytoskeletal or broadly expressed
 # proteins whose drugs are non-specific chemotherapy, not precision targets.
-DRUGGABILITY_EXCLUDE <- c("TUBB4A", "TUBB2A", "TUBA4A", "TUBB3", "TUBA1A", "ACTB", "ACTG1", "ITGAV")
+DRUGGABILITY_EXCLUDE <- c("TUBB4A", "TUBB2A", "TUBA4A", "TUBB3", "TUBA1A", "ACTB", "ACTG1")
+
+# Top active kinases per cluster from KSEA
+ksea_candidates <- ksea_all |>
+  filter(ksea_z > 1.5, n_substrates >= KSEA_MIN_SUBSTRATES) |>
+  group_by(cluster) |>
+  slice_max(ksea_z, n = 10) |>
+  ungroup() |>
+  pull(kinase) |> unique()
 
 panel_candidates <- dependency_table |>
   filter(q < 0.05, logFC > 0.5) |>
   filter(!gene %in% DRUGGABILITY_EXCLUDE) |>
   group_by(cluster) |>
-  slice_max(abs(coalesce(mean_ess, 0)), n = 10, with_ties = FALSE) |>
+  slice_max(logFC + abs(coalesce(mean_ess, 0)), n = 30, with_ties = FALSE) |>
   ungroup() |>
   pull(gene) |> unique()
+
+# Combine with KSEA with expression-based candidates
+panel_candidates <- union(panel_candidates, ksea_candidates)
+
 cat("Candidate genes for druggability lookup:", length(panel_candidates), "\n")
 ```
 
-    ## Candidate genes for druggability lookup: 30
+    ## Candidate genes for druggability lookup: 114
 
 ``` r
 CT_FILE <- "./data/clinical_target_compact.csv"
@@ -2099,7 +2100,7 @@ cat("Symbols mapped to Ensembl IDs:", nrow(gene_map), "/",
     length(panel_candidates), "\n")
 ```
 
-    ## Symbols mapped to Ensembl IDs: 32 / 30
+    ## Symbols mapped to Ensembl IDs: 118 / 114
 
 ``` r
 phase_levels <- c(
@@ -2117,7 +2118,7 @@ druggable_raw <- gene_map |>
 cat("Druggable hits (raw CHEMBL IDs):", nrow(druggable_raw), "\n")
 ```
 
-    ## Druggable hits (raw CHEMBL IDs): 1
+    ## Druggable hits (raw CHEMBL IDs): 23
 
 ``` r
 # Resolve CHEMBL IDs -> drug names via the ChEMBL REST API.
@@ -2144,7 +2145,7 @@ unique_ids <- unique(druggable_raw$chembl_id)
 cat("Resolving", length(unique_ids), "unique CHEMBL IDs to drug names...\n")
 ```
 
-    ## Resolving 1 unique CHEMBL IDs to drug names...
+    ## Resolving 21 unique CHEMBL IDs to drug names...
 
 ``` r
 name_map <- tibble(
@@ -2154,7 +2155,7 @@ cat(sprintf("Names resolved: %d / %d\n",
             sum(!is.na(name_map$drug_name)), length(unique_ids)))
 ```
 
-    ## Names resolved: 1 / 1
+    ## Names resolved: 21 / 21
 
 ``` r
 druggable_table <- druggable_raw |>
@@ -2166,14 +2167,36 @@ druggable_table <- druggable_raw |>
 cat("Druggable hits returned:", nrow(druggable_table), "\n")
 ```
 
-    ## Druggable hits returned: 1
+    ## Druggable hits returned: 23
 
 ``` r
-if (nrow(druggable_table) > 0) print(head(druggable_table, 10))
+if (nrow(druggable_table) > 0) print(head(druggable_table, 30))
 ```
 
-    ##    gene   drug_name    chembl_id max_phase
-    ## 1 PRKD1 MIDOSTAURIN CHEMBL608533         4
+    ##      gene                         drug_name     chembl_id max_phase
+    ## 1    NPM1                        CRIZOTINIB  CHEMBL601719         4
+    ## 2    NPM1                         CERITINIB CHEMBL2403108         4
+    ## 3   PRKCG                       MIDOSTAURIN  CHEMBL608533         4
+    ## 4   ITGAV                         ABCIXIMAB CHEMBL1201584         4
+    ## 5  IL1RAP                        SPESOLIMAB CHEMBL4297911         4
+    ## 6   GRIK3                        TOPIRAMATE  CHEMBL220492         4
+    ## 7   GSK3B                 LITHIUM CARBONATE CHEMBL1200826         4
+    ## 8   GSK3B                   LITHIUM CITRATE CHEMBL2103738         4
+    ## 9    CDK4                       PALBOCICLIB  CHEMBL189963         4
+    ## 10   CDK4              RIBOCICLIB SUCCINATE CHEMBL3707266         4
+    ## 11   CDK4                       ABEMACICLIB CHEMBL3301610         4
+    ## 12   CDK4                       TRILACICLIB CHEMBL3894860         4
+    ## 13   CDK4       TRILACICLIB DIHYDROCHLORIDE CHEMBL4650272         4
+    ## 14   AKT1                      CAPIVASERTIB CHEMBL2325741         4
+    ## 15  ROCK1 RIPASUDIL HYDROCHLORIDE DIHYDRATE CHEMBL4594454         4
+    ## 16  ROCK1             NETARSUDIL DIMESYLATE CHEMBL4594251         4
+    ## 17  ROCK1                           FASUDIL   CHEMBL38380         4
+    ## 18  ROCK1                        NETARSUDIL CHEMBL4594250         4
+    ## 19  ROCK1                       BELUMOSUDIL CHEMBL2005186         4
+    ## 20  ROCK1              BELUMOSUDIL MESYLATE CHEMBL4802130         4
+    ## 21  ROCK1                         RIPASUDIL CHEMBL3426621         4
+    ## 22  PRKCA                       MIDOSTAURIN  CHEMBL608533         4
+    ## 23  PRKCD                       MIDOSTAURIN  CHEMBL608533         4
 
 ### 14.6 Integrated per-cluster therapeutic panel
 
@@ -2196,7 +2219,7 @@ panel <- dependency_table |>
   left_join(
     druggable_table |>
       group_by(gene) |>
-      summarise(top_drug  = first(drug_name),
+      summarise(top_drug = first(drug_name),
                 max_phase = suppressWarnings(max(max_phase, na.rm = TRUE)),
                 .groups = "drop") |>
       mutate(max_phase = ifelse(is.infinite(max_phase), NA_real_, max_phase)),
@@ -2236,7 +2259,7 @@ panel |>
         plot.subtitle = element_text(size = 9))
 ```
 
-<img src="figures/integrated-panel-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/integrated-panel-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ``` r
 cat("\nFinal therapeutic panel: top 10 candidates per cluster:\n\n")
@@ -2253,38 +2276,38 @@ panel |>
 ```
 
     ## # A tibble: 30 × 8
-    ##    cluster gene    logFC     q mean_ess top_drug max_phase panel_score
-    ##    <chr>   <chr>   <dbl> <dbl>    <dbl> <chr>        <dbl>       <dbl>
-    ##  1 C1      PCNA    1.19      0   -2.96  <NA>            NA       4.24 
-    ##  2 C1      PUF60   0.744     0   -2.92  <NA>            NA       3.18 
-    ##  3 C1      PRPF19  0.64      0   -2.70  <NA>            NA       2.62 
-    ##  4 C1      SF3A3   0.685     0   -2.22  <NA>            NA       1.96 
-    ##  5 C1      SF3A1   0.723     0   -2.00  <NA>            NA       1.72 
-    ##  6 C1      UBE2I   0.828     0   -1.73  <NA>            NA       1.53 
-    ##  7 C1      ACTL6A  0.763     0   -1.70  <NA>            NA       1.34 
-    ##  8 C1      RBM25   0.747     0   -1.61  <NA>            NA       1.16 
-    ##  9 C1      EFTUD2  0.671     0   -1.72  <NA>            NA       1.16 
-    ## 10 C1      SSRP1   0.899     0   -1.36  <NA>            NA       1.12 
-    ## 11 C2      NSF     0.988     0   -2.44  <NA>            NA       2.98 
-    ## 12 C2      PACSIN1 2.54      0    0.039 <NA>            NA       2.63 
-    ## 13 C2      NEFM    2.49      0    0.126 <NA>            NA       2.38 
-    ## 14 C2      CAMK2B  1.59      0    0.081 <NA>            NA       2.12 
-    ## 15 C2      NEFL    2.49      0    0.331 <NA>            NA       2.07 
-    ## 16 C2      STXBP1  1.96      0   -0.191 <NA>            NA       1.69 
-    ## 17 C2      VSNL1   2.10      0    0.035 <NA>            NA       1.65 
-    ## 18 C2      STX1B   2.00      0   -0.069 <NA>            NA       1.59 
-    ## 19 C2      PRKCG   1.77      0    0.113 <NA>            NA       1.55 
-    ## 20 C2      TUBB4A  1.85      0   -0.204 <NA>            NA       1.45 
-    ## 21 C3      SUSD5   2.16      0   -0.018 <NA>            NA       1.86 
-    ## 22 C3      CSPG4   1.98      0   -0.136 <NA>            NA       1.63 
-    ## 23 C3      IL1RAP  1.97      0    0.007 <NA>            NA       1.41 
-    ## 24 C3      ITGAV   1.34      0   -0.789 <NA>            NA       1.23 
-    ## 25 C3      RAB3IP  1.65      0   -0.009 <NA>            NA       0.719
-    ## 26 C3      NLGN3   1.64      0   -0.002 <NA>            NA       0.686
-    ## 27 C3      LRP1    1.49      0   -0.118 <NA>            NA       0.514
-    ## 28 C3      RAB31   1.57      0    0.011 <NA>            NA       0.5  
-    ## 29 C3      HIP1    1.52      0   -0.027 <NA>            NA       0.449
-    ## 30 C3      EPN2    1.52      0   -0.005 <NA>            NA       0.421
+    ##    cluster gene    logFC     q mean_ess top_drug    max_phase panel_score
+    ##    <chr>   <chr>   <dbl> <dbl>    <dbl> <chr>           <dbl>       <dbl>
+    ##  1 C1      PCNA    1.19      0   -2.96  <NA>               NA       4.24 
+    ##  2 C1      PUF60   0.744     0   -2.92  <NA>               NA       3.18 
+    ##  3 C1      PRPF19  0.64      0   -2.70  <NA>               NA       2.62 
+    ##  4 C1      SF3A3   0.685     0   -2.22  <NA>               NA       1.96 
+    ##  5 C1      SF3A1   0.723     0   -2.00  <NA>               NA       1.72 
+    ##  6 C1      NPM1    0.965     0   -1.12  CRIZOTINIB          4       1.59 
+    ##  7 C1      UBE2I   0.828     0   -1.73  <NA>               NA       1.53 
+    ##  8 C1      ACTL6A  0.763     0   -1.70  <NA>               NA       1.34 
+    ##  9 C1      RBM25   0.747     0   -1.61  <NA>               NA       1.16 
+    ## 10 C1      EFTUD2  0.671     0   -1.72  <NA>               NA       1.16 
+    ## 11 C2      NSF     0.988     0   -2.44  <NA>               NA       2.98 
+    ## 12 C2      PACSIN1 2.54      0    0.039 <NA>               NA       2.63 
+    ## 13 C2      NEFM    2.49      0    0.126 <NA>               NA       2.38 
+    ## 14 C2      PRKCG   1.77      0    0.113 MIDOSTAURIN         4       2.25 
+    ## 15 C2      CAMK2B  1.59      0    0.081 <NA>               NA       2.12 
+    ## 16 C2      NEFL    2.49      0    0.331 <NA>               NA       2.07 
+    ## 17 C2      STXBP1  1.96      0   -0.191 <NA>               NA       1.69 
+    ## 18 C2      VSNL1   2.10      0    0.035 <NA>               NA       1.65 
+    ## 19 C2      STX1B   2.00      0   -0.069 <NA>               NA       1.59 
+    ## 20 C2      TUBB4A  1.85      0   -0.204 <NA>               NA       1.45 
+    ## 21 C3      IL1RAP  1.97      0    0.007 SPESOLIMAB          4       2.11 
+    ## 22 C3      ITGAV   1.34      0   -0.789 ABCIXIMAB           4       1.93 
+    ## 23 C3      SUSD5   2.16      0   -0.018 <NA>               NA       1.86 
+    ## 24 C3      CSPG4   1.98      0   -0.136 <NA>               NA       1.63 
+    ## 25 C3      GRIK3   1.36      0   -0.009 TOPIRAMATE          4       0.772
+    ## 26 C3      RAB3IP  1.65      0   -0.009 <NA>               NA       0.719
+    ## 27 C3      NLGN3   1.64      0   -0.002 <NA>               NA       0.686
+    ## 28 C3      LRP1    1.49      0   -0.118 <NA>               NA       0.514
+    ## 29 C3      RAB31   1.57      0    0.011 <NA>               NA       0.5  
+    ## 30 C3      HIP1    1.52      0   -0.027 <NA>               NA       0.449
 
 ## 15. Molecular Surrogate Classifier
 
@@ -2449,7 +2472,7 @@ if (nrow(roc_combined) > 0) {
           legend.direction = "vertical")}
 ```
 
-<img src="figures/classifier-roc-1.png" alt="" style="display: block; margin: auto;" />
+<img src="figures/classifier-roc-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ### 15.4 Selected proteins per target
 
