@@ -12,7 +12,7 @@ This repository contains a full computational analysis of the publicly available
 
 1. **Therapeutic target discovery (§14).** For each proteomic subtype, identify candidate drug targets supported by: cluster-specific protein overexpression (limma), inferred kinase activity from phosphoproteomics (KSEA + OmniPath), brain-cancer cell-line dependency (DepMap CRISPR essentiality), and approved-drug coverage (OpenTargets/DGIdb). The deliverable is an integrated, evidence-scored per-cluster therapeutic panel.
 
-2. **Molecular surrogate classification (§15).** Can the proteome predict clinically actionable molecular markers — WHO grade and canonical driver mutation status — that currently require sequencing? With ≥100 patients per outcome class, this is the only branch where a properly held-out predictive claim is statistically defensible in this cohort. A cross-validated lasso classifier (cv.glmnet) serves as the modelling backbone.
+2. **Molecular surrogate classification (§15).** Can the proteome predict clinically actionable molecular markers (WHO grade and canonical driver mutation status) that currently require sequencing? With ≥100 patients per outcome class, this is the only branch where a properly held-out predictive claim is statistically defensible in this cohort. A cross-validated lasso classifier (cv.glmnet) serves as the modelling backbone.
 
 Survival analysis (§10–11) is included as a **descriptive** characterisation of the three proteomic subtypes; the cohort has only ~36 OS events, which is insufficient for a credible per-patient predictive risk model.
 
