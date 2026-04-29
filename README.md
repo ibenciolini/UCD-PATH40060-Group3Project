@@ -1,6 +1,6 @@
 # Proteomics-Based Patient Stratification and Therapeutic Target Discovery in Pediatric Brain Tumours
 
-**Dataset:** CPTAC/CHOP Brain Cancer Cohort (`brain_cptac_2020`) — [cBioPortal](https://www.cbioportal.org/study/summary?id=brain_cptac_2020)
+**Dataset:** CPTAC/CHOP Brain Cancer Cohort (`brain_cptac_2020`) [cBioPortal](https://www.cbioportal.org/study/summary?id=brain_cptac_2020)
 
 **Reference:** Petralia F. et al. (2020) "Integrated Proteogenomic Characterization across Major Histological Types of Pediatric Brain Cancer." *Cell* 183(7), 1962–1985.e31.
 
@@ -22,22 +22,22 @@ Survival analysis (§10–11) is included as a **descriptive** characterisation 
 
 ```
 .
-├── brain_cptac_2020/               # Raw data downloaded from cBioPortal
-│   ├── data_clinical_patient.txt   # Demographics, OS/DFS, WHO grade, driver-mutation flags
-│   ├── data_clinical_sample.txt    # Sample metadata, treatment, tissue site
-│   ├── data_protein_quantification.txt       # Global proteomics matrix
+├── brain_cptac_2020/ # Raw data downloaded from cBioPortal
+│   ├── data_clinical_patient.txt # Demographics, OS/DFS, WHO grade, driver-mutation flags
+│   ├── data_clinical_sample.txt # Sample metadata, treatment, tissue site
+│   ├── data_protein_quantification.txt # Global proteomics matrix
 │   └── data_phosphoprotein_quantification.txt # Phosphosite-level abundances
 │
 ├── data/
-│   ├── Model.csv                   # DepMap cell-line metadata (lineage, model type)
+│   ├── Model.csv # DepMap cell-line metadata (lineage, model type)
 │   ├── clinical_target_compact.csv # OpenTargets clinical-stage druggability annotations
-│   └── omnipath_enzsub_human.csv   # OmniPath kinase–substrate relationships (KSEA input)
+│   └── omnipath_enzsub_human.csv # OmniPath kinase–substrate relationships (KSEA input)
 │
-├── figures/                        # All PNG figures auto-saved by knitr (fig.path)
+├── figures/ # All PNG figures auto-saved by knitr (fig.path)
 │
-├── Analysis_BrainCPTAC2020_v3.Rmd  # Main analysis notebook (source of truth)
-├── Analysis_BrainCPTAC2020_v3.md   # GitHub-rendered output (github_document)
-└── Analysis_BrainCPTAC2020_v3.pdf  # PDF output — results and figures only, no code
+├── Analysis_BrainCPTAC2020_v3.Rmd # Main analysis notebook (source of truth)
+├── Analysis_BrainCPTAC2020_v3.md # GitHub-rendered output (github_document)
+└── Analysis_BrainCPTAC2020_v3.pdf # PDF output: results and figures only, no code
 ```
 
 ---
@@ -66,9 +66,9 @@ Consensus NMF clustering (§7)
 Biological characterisation (§8–13)
     ├── Histological composition per cluster (§9)
     ├── Kaplan–Meier survival + log-rank test (§10)
-    ├── Cox model — cluster + extended clinical baseline (§11)
-    ├── Differential protein expression — limma one-vs-rest (§12)
-    └── Variable importance — random forest (§13)
+    ├── Cox model: cluster + extended clinical baseline (§11)
+    ├── Differential protein expression: limma one-vs-rest (§12)
+    └── Variable importance: random forest (§13)
     ▼
 Therapeutic target discovery (§14)
     ├── Phospho one-vs-rest contrasts per cluster
@@ -100,12 +100,12 @@ All three subtypes span multiple histological diagnoses, replicating the central
 
 ## Key Outputs
 
-- **Consensus heatmap** — sample co-clustering stability at k = 3.
-- **KM curves** — overall and disease-free survival per proteomic subtype (descriptive; log-rank p-value reported).
-- **Differential expression tables** — limma one-vs-rest results per cluster (logFC, adjusted p-value).
-- **KSEA results** — per-cluster kinase activity z-scores inferred from phosphoproteomics.
-- **Therapeutic panel table** — integrated target list scored by `panel_score` (limma logFC + DepMap essentiality + druggability phase).
-- **ROC curve** — out-of-fold held-out AUC for the WHO grade lasso classifier.
+- **Consensus heatmap**: sample co-clustering stability at k = 3.
+- **KM curves**: overall and disease-free survival per proteomic subtype (descriptive; log-rank p-value reported).
+- **Differential expression tables**: limma one-vs-rest results per cluster (logFC, adjusted p-value).
+- **KSEA results**: per-cluster kinase activity z-scores inferred from phosphoproteomics.
+- **Therapeutic panel table**: integrated target list scored by `panel_score` (limma logFC + DepMap essentiality + druggability phase).
+- **ROC curve**: out-of-fold held-out AUC for the WHO grade lasso classifier.
 
 All figures are written to `./figures/` with the R chunk label as the filename.
 
@@ -121,26 +121,11 @@ R ≥ 4.3. The following packages are required:
 
 **Bioconductor:** `impute`, `NMF`, `mixOmics`
 
-**Optional** (chunks degrade gracefully if absent): `OmnipathR`, `depmap`, `httr2`, `jsonlite`, `GSVA`, `msigdbr`
+**Optional** (chunks degrade if absent): `OmnipathR`, `depmap`, `httr2`, `jsonlite`, `GSVA`, `msigdbr`
 
 ### Data
 
 Download the study from cBioPortal and place the four files listed above in `./brain_cptac_2020/`. The supplementary data files in `./data/` are included in this repository.
-
-### Rendering
-
-```r
-# Full render — produces both the .md (GitHub) and .pdf outputs
-rmarkdown::render("Analysis_BrainCPTAC2020_v3.Rmd", output_format = "all")
-
-# GitHub document only
-rmarkdown::render("Analysis_BrainCPTAC2020_v3.Rmd", output_format = "github_document")
-
-# PDF only (code hidden)
-rmarkdown::render("Analysis_BrainCPTAC2020_v3.Rmd", output_format = "pdf_document")
-```
-
-The NMF sweep (§6) and final NMF (§7) are the slowest steps (~5–15 min depending on `NMF_RUNS`). Both chunks support `cache = TRUE` after the first run.
 
 ---
 
