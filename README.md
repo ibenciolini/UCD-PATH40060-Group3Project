@@ -1,154 +1,181 @@
-# Proteomics-Based Patient Stratification of Pediatric Brain Tumours
+# Proteomics-Based Patient Stratification and Therapeutic Target Discovery in Pediatric Brain Tumours
+
+**Dataset:** CPTAC/CHOP Brain Cancer Cohort (`brain_cptac_2020`) — [cBioPortal](https://www.cbioportal.org/study/summary?id=brain_cptac_2020)
+
+**Reference:** Petralia F. et al. (2020) "Integrated Proteogenomic Characterization across Major Histological Types of Pediatric Brain Cancer." *Cell* 183(7), 1962–1985.e31.
+
+---
 
 ## Overview
 
-This repository loosely reproduces and extends the proteomics-based patient stratification
-from [Petralia et al. (Cell, 2020)](https://doi.org/10.1016/j.cell.2020.10.044) using
-the CPTAC/CHOP paediatric brain cancer dataset, publicly available on
-[cBioPortal](https://www.cbioportal.org/study/summary?id=brain_cptac_2020).
+This repository contains a full computational analysis of the publicly available CPTAC/CHOP pediatric brain tumour dataset (218 tumour samples, 199 patients, 7 histological subtypes). Building on the unsupervised NMF proteomic subtypes from the original paper, the analysis pursues two precision-oncology questions:
 
-Link to the html-rendered .Rmd file with the entire analysis: [Analysis_BrainCPTAC2020.html](https://ibenciolini.github.io/UCD-PATH40060-Group3Project/Analysis_BrainCPTAC2020.html)
+1. **Therapeutic target discovery (§14).** For each proteomic subtype, identify candidate drug targets supported by: cluster-specific protein overexpression (limma), inferred kinase activity from phosphoproteomics (KSEA + OmniPath), brain-cancer cell-line dependency (DepMap CRISPR essentiality), and approved-drug coverage (OpenTargets/DGIdb). The deliverable is an integrated, evidence-scored per-cluster therapeutic panel.
 
-**Dataset at a glance**
+2. **Molecular surrogate classification (§15).** Can the proteome predict clinically actionable molecular markers — WHO grade and canonical driver mutation status — that currently require sequencing? With ≥100 patients per outcome class, this is the only branch where a properly held-out predictive claim is statistically defensible in this cohort. A cross-validated lasso classifier (cv.glmnet) serves as the modelling backbone.
 
-| Feature | Value |
-|---|---|
-| Samples | 218 tumours from 199 patients |
-| Histological subtypes | 7 (LGG, Ependymoma, HGG, Medulloblastoma, Ganglioglioma, Craniopharyngioma, ATRT) |
-| Data modalities | WGS · RNA-seq · global proteomics · phosphoproteomics |
-| Survival events | 40 deaths / 192 patients with OS data |
+Survival analysis (§10–11) is included as a **descriptive** characterisation of the three proteomic subtypes; the cohort has only ~36 OS events, which is insufficient for a credible per-patient predictive risk model.
 
-**Why proteomics for stratification?**  
-Unlike sparse binary mutation profiles, proteomics data is already a dense,
-continuous, pathway-integrated signal that directly captures the functional downstream
-consequences of mutations, splicing, and post-translational regulation, essentially
-the "smoothed" output that Network-Based Stratification (NBS) tries to recover from
-mutation data alone.
-
-**Analysis pipeline**
-
-```
-Local data files
-    │  load + clean column names (janitor)
-    V
-Quality control
-    │  remove high-missing proteins (> 30%), KNN imputation, PCA sanity check
-    V
-Dimensionality reduction
-    │  top 50 PCs → shift to non-negative for NMF input
-    V
-k selection
-    │  cophenetic correlation · dispersion · silhouette  (k = 2–8)
-    V
-Consensus NMF clustering
-    │  60 NMF runs per k · consensus matrix · final cluster labels
-    V
-Biological validation
-    ├── Kaplan–Meier survival curves (log-rank test, Cox PH model)
-    ├── Histological composition per cluster
-    └── Differential protein expression (limma one-vs-rest)
-```
-
-An optional NBS comparison arm (Section 9) runs mutation-based network
-propagation (STRING v12, α = 0.7, igraph) and computes the Adjusted Rand Index
-between proteomics- and mutation-derived subtypes to quantify how much biology
-proteomics captures beyond genomics.
+---
 
 ## Repository Structure
 
 ```
 .
-├── Analysis_BrainCPTAC2020.Rmd        # Main analysis notebook
-├── Analysis_BrainCPTAC2020.html       # Pre-rendered HTML output
-├── brain_cptac_2020/                  # Data files (downloaded from cBioPortal)
-│   ├── data_clinical_patient.txt
-│   ├── data_clinical_sample.txt
-│   ├── data_protein_quantification.txt
-│   └── data_mutations.txt
-├── Cell_Petralia2020.pdf                # Petralia et al. Cell 2020
-└── README.md
+├── brain_cptac_2020/               # Raw data downloaded from cBioPortal
+│   ├── data_clinical_patient.txt   # Demographics, OS/DFS, WHO grade, driver-mutation flags
+│   ├── data_clinical_sample.txt    # Sample metadata, treatment, tissue site
+│   ├── data_protein_quantification.txt       # Global proteomics matrix
+│   └── data_phosphoprotein_quantification.txt # Phosphosite-level abundances
+│
+├── data/
+│   ├── Model.csv                   # DepMap cell-line metadata (lineage, model type)
+│   ├── clinical_target_compact.csv # OpenTargets clinical-stage druggability annotations
+│   └── omnipath_enzsub_human.csv   # OmniPath kinase–substrate relationships (KSEA input)
+│
+├── figures/                        # All PNG figures auto-saved by knitr (fig.path)
+│
+├── Analysis_BrainCPTAC2020_v3.Rmd  # Main analysis notebook (source of truth)
+├── Analysis_BrainCPTAC2020_v3.md   # GitHub-rendered output (github_document)
+└── Analysis_BrainCPTAC2020_v3.pdf  # PDF output — results and figures only, no code
 ```
+
+---
+
+## Analysis Pipeline
+
+```
+Raw cBioPortal flat files
+    │ load + clean column names (janitor::clean_names)
+    ▼
+Quality control (§3)
+    │ remove proteins missing in >30% of samples; KNN imputation
+    ▼
+Exploratory analysis (§4)
+    │ PCA, PLS-DA, sPLS-DA, UMAP
+    ▼
+Dimensionality reduction (§5)
+    │ top 25 PCs; shift to non-negative for NMF
+    ▼
+k selection (§6)
+    │ cophenetic / dispersion / silhouette / cluster purity across k = 2..8
+    ▼
+Consensus NMF clustering (§7)
+    │ 20 runs at k = 3 (brunet); consensus matrix; final cluster labels
+    ▼
+Biological characterisation (§8–13)
+    ├── Histological composition per cluster (§9)
+    ├── Kaplan–Meier survival + log-rank test (§10)
+    ├── Cox model — cluster + extended clinical baseline (§11)
+    ├── Differential protein expression — limma one-vs-rest (§12)
+    └── Variable importance — random forest (§13)
+    ▼
+Therapeutic target discovery (§14)
+    ├── Phospho one-vs-rest contrasts per cluster
+    ├── Kinase activity inference (KSEA, OmniPath substrates)
+    ├── DepMap brain-line CRISPR dependency for cluster markers
+    ├── Druggability annotation (OpenTargets / DGIdb)
+    └── Integrated per-cluster therapeutic panel (panel_score)
+    ▼
+Molecular surrogate classifier (§15)
+    └── Cross-validated lasso (cv.glmnet, keep=TRUE) for
+        WHO grade and any-driver-mutation prediction
+```
+
+---
+
+## Proteomic Subtypes
+
+Three subtypes are identified at k = 3 (cophenetic, silhouette, and mean cluster purity all peak here):
+
+| Subtype | Biological identity | Key marker proteins |
+|---|---|---|
+| **C1 — Proliferative/Nuclear** | High cell-cycle and nuclear activity | SEPT8, PCNA, NPM1, SON |
+| **C2 — Neuronal/Synaptic** | Neuronal differentiation programme | NEFL, NEFM, CAMK2B, STX1B |
+| **C3 — Mesenchymal/Microenvironment** | Extracellular matrix and immune infiltration | CSPG4, LRP1, IL1RAP, NLGN3 |
+
+All three subtypes span multiple histological diagnoses, replicating the central finding of Petralia et al. that molecular programmes cut across classical pathological boundaries.
+
+---
+
+## Key Outputs
+
+- **Consensus heatmap** — sample co-clustering stability at k = 3.
+- **KM curves** — overall and disease-free survival per proteomic subtype (descriptive; log-rank p-value reported).
+- **Differential expression tables** — limma one-vs-rest results per cluster (logFC, adjusted p-value).
+- **KSEA results** — per-cluster kinase activity z-scores inferred from phosphoproteomics.
+- **Therapeutic panel table** — integrated target list scored by `panel_score` (limma logFC + DepMap essentiality + druggability phase).
+- **ROC curve** — out-of-fold held-out AUC for the WHO grade lasso classifier.
+
+All figures are written to `./figures/` with the R chunk label as the filename.
 
 ---
 
 ## Reproducing the Analysis
 
-### 1. Get the data
+### Requirements
 
-Download the study from cBioPortal and place the files in `brain_cptac_2020/`:
+R ≥ 4.3. The following packages are required:
 
-```bash
-# Option A: manual download
-# Go to https://www.cbioportal.org/study/summary?id=brain_cptac_2020
-# Click "Download" → download the full study zip → extract into brain_cptac_2020/
+**CRAN:** `tidyverse`, `janitor`, `car`, `gridExtra`, `cluster`, `pheatmap`, `RColorBrewer`, `ConsensusClusterPlus`, `umap`, `survival`, `survminer`, `limma` (via Bioconductor), `randomForest`, `randomForestSRC`, `glmnet`, `conflicted`
 
-# Option B: command line (requires curl)
-curl -L "https://cbioportal-datahub.s3.amazonaws.com/brain_cptac_2020.tar.gz" \
-     -o brain_cptac_2020.tar.gz
-tar -xzf brain_cptac_2020.tar.gz
-```
+**Bioconductor:** `impute`, `NMF`, `mixOmics`
 
-Four files are required:
+**Optional** (chunks degrade gracefully if absent): `OmnipathR`, `depmap`, `httr2`, `jsonlite`, `GSVA`, `msigdbr`
 
-| File | Contents |
-|---|---|
-| `data_clinical_patient.txt` | OS months/status, age, sex (199 rows) |
-| `data_clinical_sample.txt` | Histological subtype per sample (218 rows) |
-| `data_protein_quantification.txt` | Global proteomics z-scores (6 429 proteins × 218 samples) |
-| `data_mutations.txt` | Somatic mutation calls (9 951 rows) |
+### Data
 
-### 2. Install R dependencies
+Download the study from cBioPortal and place the four files listed above in `./brain_cptac_2020/`. The supplementary data files in `./data/` are included in this repository.
+
+### Rendering
 
 ```r
-# CRAN packages
-install.packages(c(
-  "tidyverse", "janitor", # data wrangling
-  "NMF", "cluster", "pheatmap", # clustering & visualisation
-  "RColorBrewer", # colour palettes
-  "survival", "survminer", # Kaplan–Meier / Cox
-  "limma" # differential protein expression
-))
+# Full render — produces both the .md (GitHub) and .pdf outputs
+rmarkdown::render("Analysis_BrainCPTAC2020_v3.Rmd", output_format = "all")
 
-# Bioconductor packages
-if (!requireNamespace("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
+# GitHub document only
+rmarkdown::render("Analysis_BrainCPTAC2020_v3.Rmd", output_format = "github_document")
 
-BiocManager::install(c(
-  "impute", # KNN imputation for missing proteomics values
-  "limma", # also on Bioconductor
-  "STRINGdb", # for NBS comparison arm
-  "igraph"
-))
+# PDF only (code hidden)
+rmarkdown::render("Analysis_BrainCPTAC2020_v3.Rmd", output_format = "pdf_document")
 ```
 
-### 3. Run the notebook
-
-Open `Analysis_BrainCPTAC2020.Rmd` in RStudio and run all code chunks or knit the document.
+The NMF sweep (§6) and final NMF (§7) are the slowest steps (~5–15 min depending on `NMF_RUNS`). Both chunks support `cache = TRUE` after the first run.
 
 ---
 
-## Key Results
+## Key Configuration Parameters
 
-| Finding | Detail |
-|---|---|
-| Optimal clusters | k = 8 (highest cophenetic correlation, matching Petralia et al.) |
-| Survival separation | log-rank p < 0.0001 across 8 clusters |
-| Cox concordance | C = 0.814 (cluster + age + sex model) |
-| Worst-prognosis cluster | C5 — HR ≈ 10.5 vs C1; enriched for HGG, marked by IGFBP2/SHMT2/PBK |
-| Cross-histology grouping | LGG, Ependymoma, and Ganglioglioma co-cluster in C1/C3/C4 |
-| Therapeutic target | ERBB2 upregulated in C4 (ciliopathy/developmental programme) |
+All parameters are set in the `config` chunk at the top of the Rmd and documented in-line:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `MISSING_THRESHOLD` | 0.30 | Remove proteins missing in >30% of samples |
+| `N_PCS` | 25 | PCA components fed into NMF |
+| `K_MIN` / `K_MAX` | 2 / 8 | k range for the NMF sweep |
+| `NMF_RUNS` | 20 | NMF initialisations per k (paper used 60) |
+| `KSEA_MIN_SUBSTRATES` | 5 | Minimum substrates for a valid KSEA z-score |
+| `DEPMAP_ESS_THRESH` | −0.5 | CERES/Chronos threshold for "essential" |
+| `DRUGGABILITY_PHASE` | 1 | Minimum OpenTargets clinical phase |
+| `CLASSIFIER_FOLDS` | 10 | Folds for cv.glmnet cross-validation |
 
 ---
 
-## Reference
+## Important Caveats
 
-Petralia F. et al. (2020). *Integrated Proteogenomic Characterization across Major
-Histological Types of Pediatric Brain Cancer.*
-**Cell** 183(7): 1962–1985.e31.
-[doi:10.1016/j.cell.2020.10.044](https://doi.org/10.1016/j.cell.2020.10.044)
+- **Survival analysis is descriptive only.** ~36 OS events across 218 patients is well below the ≥10-events-per-parameter rule of thumb for a credible predictive model. KM curves and the Cox model characterise the subtypes; they do not generate a per-patient risk score.
+- **The driver-mutation classifier should be interpreted cautiously.** Only 19/199 patients have a recorded driver mutation, a ~10:1 class imbalance. A CV AUC near 1.0 in this setting likely reflects the classifier learning histological subtype (which correlates with driver status) rather than driver status directly.
+- **Single-cohort validation.** All results are internal. External validation in an independent cohort (PBTA, OpenPedCan, or an adult CPTAC release) is the required next step before any clinical claim.
+- **The therapeutic panel is hypothesis-generating.** Targets in §14 are supported by convergent computational evidence, not experimental validation.
 
-Additional methods references:
+---
 
-- Hofree M. et al. (2013). Network-based stratification of tumour mutations. **Nature Methods** 10, 1108–1115.
-- Monti S. et al. (2003). Consensus Clustering. **Machine Learning** 52, 91–118.
-- Cerami E. et al. (2012). The cBio Cancer Genomics Portal. **Cancer Discovery** 2, 401–404.
+## References
+
+- Petralia F. et al. (2020) *Cell* 183(7), 1962–1985.e31. doi:10.1016/j.cell.2020.10.044
+- Monti S. et al. (2003) *Machine Learning* 52, 91–118. — Consensus clustering methodology
+- Casado P. et al. (2013) *Science Signaling* 6(268), rs6. — KSEA methodology
+- Türei D. et al. (2016) *Nature Methods* 13, 966–967. — OmniPath kinase–substrate annotations
+- Tsherniak A. et al. (2017) *Cell* 170(3), 564–576. — DepMap CRISPR essentiality
+- Ochoa D. et al. (2023) *Nucleic Acids Research* 51(D1), D1353–D1359. — Open Targets Platform
+- Friedman J. et al. (2010) *Journal of Statistical Software* 33(1), 1–22. — glmnet
