@@ -1,60 +1,111 @@
----
-title: "Proteomics-Based Patient Stratification, and Therapeutic Target Discovery in Pediatric Brain Tumours"
-subtitle: CPTAC/CHOP Brain Cancer Cohort (brain_cptac_2020)
-date: "`r Sys.Date()`"
-output:
-  github_document:
-    toc: true
-  pdf_document:
-    latex_engine: xelatex
-    toc: true
-  html_notebook:
-    toc: true
-    toc_float: true
-    theme: cosmo
----
+Proteomics-Based Patient Stratification, and Therapeutic Target
+Discovery in Pediatric Brain Tumours
+================
+2026-05-02
 
-```{r setup, include=FALSE}
-# Create figures directory if missing — fig.path below writes here
-if (!dir.exists("figures")) dir.create("figures", recursive = TRUE)
+- [Overview](#overview)
+  - [Data files used from
+    `./brain_cptac_2020`](#data-files-used-from-brain_cptac_2020)
+  - [Risk](#risk)
+  - [Pipeline summary](#pipeline-summary)
+- [1. Packages & Configuration](#1-packages--configuration)
+- [2. Data Loading](#2-data-loading)
+- [3. Quality Control](#3-quality-control)
+- [4. Exploratory Analysis](#4-exploratory-analysis)
+  - [4.1 PCA](#41-pca)
+  - [4.2 PLS-DA (supervised projection by
+    histology)](#42-pls-da-supervised-projection-by-histology)
+  - [4.3 Sparse PLS-DA (feature selection by
+    histology)](#43-sparse-pls-da-feature-selection-by-histology)
+  - [4.4 UMAP (non-linear sanity
+    check)](#44-umap-non-linear-sanity-check)
+- [5. Dimensionality Reduction (PCA to NMF
+  input)](#5-dimensionality-reduction-pca-to-nmf-input)
+- [6. Selecting the Number of Clusters
+  (k)](#6-selecting-the-number-of-clusters-k)
+- [7. Consensus NMF Clustering](#7-consensus-nmf-clustering)
+- [8. Cluster Annotation](#8-cluster-annotation)
+- [9. Histological Composition per
+  Cluster](#9-histological-composition-per-cluster)
+- [10. Survival Analysis
+  (Kaplan–Meier)](#10-survival-analysis-kaplanmeier)
+- [11. Cox Proportional Hazards
+  Model](#11-cox-proportional-hazards-model)
+- [12. Differential Protein Expression (limma
+  one-vs-rest)](#12-differential-protein-expression-limma-one-vs-rest)
+- [13. Random Forest (classification by
+  histology)](#13-random-forest-classification-by-histology)
+- [14. Therapeutic Target Discovery](#14-therapeutic-target-discovery)
+  - [14.1 Per-cluster phosphosite contrasts
+    (limma)](#141-per-cluster-phosphosite-contrasts-limma)
+  - [14.2 Kinase activity per cluster
+    (KSEA)](#142-kinase-activity-per-cluster-ksea)
+  - [14.3 Cluster-marker shortlist (overexpressed
+    proteins)](#143-cluster-marker-shortlist-overexpressed-proteins)
+  - [14.4 DepMap brain-line
+    dependency](#144-depmap-brain-line-dependency)
+  - [14.5 Druggability annotation
+    (OpenTargets)](#145-druggability-annotation-opentargets)
+  - [14.6 Integrated per-cluster therapeutic
+    panel](#146-integrated-per-cluster-therapeutic-panel)
+- [15. Molecular Surrogate
+  Classifier](#15-molecular-surrogate-classifier)
+  - [15.1 Define classification
+    targets](#151-define-classification-targets)
+  - [15.2 Cross-validated logistic-lasso classifier per
+    target](#152-cross-validated-logistic-lasso-classifier-per-target)
+  - [15.3 ROC curves with held-out
+    predictions](#153-roc-curves-with-held-out-predictions)
+  - [15.4 Selected proteins per
+    target](#154-selected-proteins-per-target)
+  - [15.5 Limitations](#155-limitations)
+- [16 Protein analysis](#16-protein-analysis)
+  - [16.1 Mapping omics datasets to proteomics sample
+    space](#161-mapping-omics-datasets-to-proteomics-sample-space)
+  - [16.2 Mutation enrichment per
+    cluster](#162-mutation-enrichment-per-cluster)
+  - [16.3 CNV PCA](#163-cnv-pca)
+  - [16.4 CNV–protein correlation](#164-cnvprotein-correlation)
+  - [16.5 Discrete CNV enrichment](#165-discrete-cnv-enrichment)
+  - [16.6 RNA PCA](#166-rna-pca)
+  - [16.7 RNA–protein correlation](#167-rnaprotein-correlation)
+  - [16.8 RNA differential expression](#168-rna-differential-expression)
+  - [16.9 Multi-omics survival model](#169-multi-omics-survival-model)
+  - [16.10 Limitations](#1610-limitations)
+- [References](#references)
 
-knitr::opts_chunk$set(
-  echo = !knitr::is_latex_output(),
-  message = FALSE,
-  warning = FALSE,
-  dev = "png", # save every figure as a PNG…
-  fig.path = "figures/", # …into ./figures with the chunk label as filename
-  dpi = 150,
-  out.width = "100%", # Forces the image to fit within page margins
-  fig.align = "center"
-)
-```
-
-```{r conflicts, include=FALSE}
-# Resolve common namespace clashes upfront so later chunks don't silently
-# pick the wrong function (e.g. MASS::select vs dplyr::select).
-library(conflicted)
-conflicts_prefer(dplyr::select)
-conflicts_prefer(dplyr::filter)
-conflicts_prefer(dplyr::rename)
-conflicts_prefer(dplyr::slice)
-conflicts_prefer(base::intersect, base::union, base::setdiff)
-```
----
+------------------------------------------------------------------------
 
 ## Overview
 
-This notebook reproduces and extends the proteomics-based patient stratification from Petralia et al. (Cell, 2020) using the publicly available CPTAC/CHOP pediatric brain cancer dataset (`brain_cptac_2020` on cBioPortal). Building on the unsupervised NMF subtypes, it asks two complementary precision-oncology questions:
+This notebook reproduces and extends the proteomics-based patient
+stratification from Petralia et al. (Cell, 2020) using the publicly
+available CPTAC/CHOP pediatric brain cancer dataset (`brain_cptac_2020`
+on cBioPortal). Building on the unsupervised NMF subtypes, it asks two
+complementary precision-oncology questions:
 
-1. **Therapeutic target discovery (§14).** For each proteomic subtype, can we propose a panel of candidate drug targets supported by multiple, independent lines of evidence, cluster-specific overexpression (limma), inferred kinase activity (KSEA on the phosphoproteome), brain-cancer cell-line dependency (DepMap CRISPR essentiality), and approved-drug coverage (OpenTargets / DGIdb)?
-2. **Molecular surrogate classification (§15).** Can the proteome serve as a surrogate predictor of clinically actionable molecular markers (WHO grade, IDH/H3F3A driver status) that today require sequencing? With ≈ 100+ patients per outcome class this is the only branch where a properly held-out predictive claim is statistically credible in this cohort.
+1.  **Therapeutic target discovery (§14).** For each proteomic subtype,
+    can we propose a panel of candidate drug targets supported by
+    multiple, independent lines of evidence, cluster-specific
+    overexpression (limma), inferred kinase activity (KSEA on the
+    phosphoproteome), brain-cancer cell-line dependency (DepMap CRISPR
+    essentiality), and approved-drug coverage (OpenTargets / DGIdb)?
+2.  **Molecular surrogate classification (§15).** Can the proteome serve
+    as a surrogate predictor of clinically actionable molecular markers
+    (WHO grade, IDH/H3F3A driver status) that today require sequencing?
+    With ≈ 100+ patients per outcome class this is the only branch where
+    a properly held-out predictive claim is statistically credible in
+    this cohort.
 
-**Dataset:** 218 tumour samples from 199 patients across 7 histological subtypes (LGG, Ependymoma, HGG, Medulloblastoma, Ganglioglioma, Craniopharyngioma, ATRT), each with WGS, RNA-seq, global proteomics, and phosphoproteomics.
+**Dataset:** 218 tumour samples from 199 patients across 7 histological
+subtypes (LGG, Ependymoma, HGG, Medulloblastoma, Ganglioglioma,
+Craniopharyngioma, ATRT), each with WGS, RNA-seq, global proteomics, and
+phosphoproteomics.
 
 ### Data files used from `./brain_cptac_2020`
 
 | File | Used for |
-|---|---|
+|----|----|
 | `data_clinical_patient.txt` | Demographics, OS (`os_status`, `os_months`), DFS (`dfs_status`, `dfs_months`), WHO grade, age at diagnosis, sex, and pre-computed driver-mutation flags (`braf_status`, `h3f3a_ctnnb1_status`, `ependymoma_rela_status`, `hgg_h3f3a_status`, `lgg_braf_status`, `ctnnb1_status`) |
 | `data_clinical_sample.txt` | Sample-level metadata: `cancer_type_detailed`, `tumor_type`, treatment fields (`extent_of_tumor_resection`, `radiation`, `chemotherapy`), tissue site |
 | `data_protein_quantification.txt` | Global proteomics matrix: feature space for clustering, differential expression, and the molecular-subtype classifier (§15) |
@@ -62,58 +113,74 @@ This notebook reproduces and extends the proteomics-based patient stratification
 
 ### Risk
 
-1. **Prognostic risk**: the descriptive question *"do these proteomic subtypes have different survival outcomes?"*, addressed in §10–11 with KM curves and a Cox model on cluster + extended clinical baseline. Because the clusters were defined unsupervised on the proteome (no survival input), this section is honest and free from outcome leakage. With only ≈ 36 OS events across 218 patients, however, this cohort is too small to support a credible per-patient predictive risk score (the rule of thumb is ≥ 10 events per parameter), so we deliberately do not attempt one.
-2. **Therapeutic risk and opportunity**: the precision-oncology question *"what targets is each subtype most likely to depend on, and which of those are druggable?"*, addressed in §14, where each cluster is characterised by overexpressed proteins, inferred kinase activity from phosphoproteomics, brain cell-line dependency profiles, and approved-drug coverage. The deliverable is a per-cluster panel of candidate targets, not a per-patient score.
+1.  **Prognostic risk**: the descriptive question *“do these proteomic
+    subtypes have different survival outcomes?”*, addressed in §10–11
+    with KM curves and a Cox model on cluster + extended clinical
+    baseline. Because the clusters were defined unsupervised on the
+    proteome (no survival input), this section is honest and free from
+    outcome leakage. With only ≈ 36 OS events across 218 patients,
+    however, this cohort is too small to support a credible per-patient
+    predictive risk score (the rule of thumb is ≥ 10 events per
+    parameter), so we deliberately do not attempt one.
+2.  **Therapeutic risk and opportunity**: the precision-oncology
+    question *“what targets is each subtype most likely to depend on,
+    and which of those are druggable?”*, addressed in §14, where each
+    cluster is characterised by overexpressed proteins, inferred kinase
+    activity from phosphoproteomics, brain cell-line dependency
+    profiles, and approved-drug coverage. The deliverable is a
+    per-cluster panel of candidate targets, not a per-patient score.
 
-The §15 classifier sidesteps the OS-event-count problem entirely by predicting molecular outcomes (WHO grade and driver status) where the cohort has 100+ events per class, allowing a properly cross-validated predictive claim.
+The §15 classifier sidesteps the OS-event-count problem entirely by
+predicting molecular outcomes (WHO grade and driver status) where the
+cohort has 100+ events per class, allowing a properly cross-validated
+predictive claim.
 
 ### Pipeline summary
 
-```
-Local data files
-    │ load + clean column names
-    v
-Quality control
-    │ remove high-missing proteins, KNN imputation
-    v
-Exploratory analysis
-    │ PCA, PLS-DA, sPLS-DA, UMAP
-    v
-Dimensionality reduction
-    │ top 25 PCs, shift to non-negative for NMF
-    v
-k selection
-    │ cophenetic / dispersion / silhouette across k = K_MIN..K_MAX
-    v
-Consensus NMF clustering
-    │ N runs at chosen k, consensus matrix, final cluster labels
-    v
-Biological characterisation
-    ├── Histological composition per cluster
-    ├── Kaplan–Meier survival (log-rank test)
-    ├── Cox model, extended clinical baseline + cluster
-    ├── Differential protein expression (limma one-vs-rest)
-    └── Variable importance (RF)
-    v
-Therapeutic target discovery (§14)
-    ├── Phospho one-vs-rest contrasts per cluster
-    ├── Kinase activity inference (KSEA, OmniPath substrates)
-    ├── DepMap brain-line dependency for cluster markers
-    ├── Druggability annotation (OpenTargets / DGIdb)
-    └── Integrated per-cluster therapeutic panel
-    v
-Molecular surrogate classifier (§15)
-    └── Proteomic predictor of WHO grade and driver status
-        with held-out cross-validation (honest predictive claim)
-```
+    Local data files
+        │ load + clean column names
+        v
+    Quality control
+        │ remove high-missing proteins, KNN imputation
+        v
+    Exploratory analysis
+        │ PCA, PLS-DA, sPLS-DA, UMAP
+        v
+    Dimensionality reduction
+        │ top 25 PCs, shift to non-negative for NMF
+        v
+    k selection
+        │ cophenetic / dispersion / silhouette across k = K_MIN..K_MAX
+        v
+    Consensus NMF clustering
+        │ N runs at chosen k, consensus matrix, final cluster labels
+        v
+    Biological characterisation
+        ├── Histological composition per cluster
+        ├── Kaplan–Meier survival (log-rank test)
+        ├── Cox model, extended clinical baseline + cluster
+        ├── Differential protein expression (limma one-vs-rest)
+        └── Variable importance (RF)
+        v
+    Therapeutic target discovery (§14)
+        ├── Phospho one-vs-rest contrasts per cluster
+        ├── Kinase activity inference (KSEA, OmniPath substrates)
+        ├── DepMap brain-line dependency for cluster markers
+        ├── Druggability annotation (OpenTargets / DGIdb)
+        └── Integrated per-cluster therapeutic panel
+        v
+    Molecular surrogate classifier (§15)
+        └── Proteomic predictor of WHO grade and driver status
+            with held-out cross-validation (honest predictive claim)
 
----
+------------------------------------------------------------------------
 
 ## 1. Packages & Configuration
 
-All libraries are loaded up front so that every chunk runs in a known environment.
+All libraries are loaded up front so that every chunk runs in a known
+environment.
 
-```{r packages}
+``` r
 # Core
 library(tidyverse) # dplyr, ggplot2, tidyr, purrr, stringr
 library(janitor) # clean_names() for consistent column naming
@@ -163,7 +230,7 @@ if (have_GSVA) library(GSVA)
 if (have_msigdbr) library(msigdbr)
 ```
 
-```{r config}
+``` r
 # Global parameters
 set.seed(42)
 
@@ -196,13 +263,17 @@ CLUSTER_NAMES <- c("C1" = "Proliferative/Nuclear",
 cat("Configuration ready. Data directory:", DATA_DIR)
 ```
 
----
+    ## Configuration ready. Data directory: ./brain_cptac_2020
+
+------------------------------------------------------------------------
 
 ## 2. Data Loading
 
-We read flat files downloaded from cBioPortal. All files live in `DATA_DIR`. Column names are cleaned with `janitor::clean_names()` so that everything downstream uses consistent `snake_case`.
+We read flat files downloaded from cBioPortal. All files live in
+`DATA_DIR`. Column names are cleaned with `janitor::clean_names()` so
+that everything downstream uses consistent `snake_case`.
 
-```{r load-data}
+``` r
 # Clinical (patient-level) — includes OS, DFS, grade, driver flags
 clin_raw <- read.delim(
   file.path(DATA_DIR, "data_clinical_patient.txt"),
@@ -232,15 +303,42 @@ phos_raw <- read.delim(
 ) |> janitor::clean_names()
 
 cat("Files loaded.\n")
+```
+
+    ## Files loaded.
+
+``` r
 cat("  Clinical patients:", nrow(clin_raw), "rows\n")
+```
+
+    ##   Clinical patients: 199 rows
+
+``` r
 cat("  Clinical samples:", nrow(samples_raw), "rows\n")
+```
+
+    ##   Clinical samples: 218 rows
+
+``` r
 cat("  Proteomics rows:", nrow(prot_raw), "(should equal n_proteins)\n")
+```
+
+    ##   Proteomics rows: 6429 (should equal n_proteins)
+
+``` r
 cat("  Phosphoproteomics rows:", nrow(phos_raw), "(phosphosites)\n")
 ```
 
-The proteomics file ships in protein × sample orientation. We transpose it to samples × proteins because every clustering / modelling library we use expects samples as rows. We also fix the rownames: R prepends `x` to numeric-starting column names and converts hyphens to underscores when reading column headers, so we reverse both transformations to recover the canonical `7316-NNNN` sample IDs.
+    ##   Phosphoproteomics rows: 4548 (phosphosites)
 
-```{r build-matrices}
+The proteomics file ships in protein × sample orientation. We transpose
+it to samples × proteins because every clustering / modelling library we
+use expects samples as rows. We also fix the rownames: R prepends `x` to
+numeric-starting column names and converts hyphens to underscores when
+reading column headers, so we reverse both transformations to recover
+the canonical `7316-NNNN` sample IDs.
+
+``` r
 # Build proteomics matrix (samples × proteins)
 prot_wide <- prot_raw |>
   column_to_rownames("composite_element_ref") |> # protein IDs to rownames
@@ -308,25 +406,65 @@ samples <- samples_raw |>
     by = "patient_id")
 
 cat("Proteomics matrix:", nrow(prot_wide), "samples ×", ncol(prot_wide), "proteins\n")
+```
+
+    ## Proteomics matrix: 218 samples × 6429 proteins
+
+``` r
 cat("Phosphoproteomics matrix:", nrow(phos_wide), "samples ×", ncol(phos_wide), "phosphosites\n")
+```
+
+    ## Phosphoproteomics matrix: 217 samples × 4548 phosphosites
+
+``` r
 cat("Patients with OS data:", sum(!is.na(clinical$os_months)), "  events:",
     sum(clinical$os_event, na.rm = TRUE), "\n")
+```
+
+    ## Patients with OS data: 192   events: 40
+
+``` r
 cat("Patients with DFS data:", sum(!is.na(clinical$dfs_months)), "  events:",
     sum(clinical$dfs_event, na.rm = TRUE), "\n")
+```
+
+    ## Patients with DFS data: 192   events: 90
+
+``` r
 cat("Histological subtypes:")
+```
+
+    ## Histological subtypes:
+
+``` r
 samples |> count(cancer_type_detailed, sort = TRUE) |> print()
 ```
 
----
+    ##                       cancer_type_detailed  n
+    ## 1              Pediatric Low Grade Gliomas 93
+    ## 2                        Ependymomal Tumor 32
+    ## 3             Pediatric High Grade Gliomas 25
+    ## 4                          Medulloblastoma 22
+    ## 5                            Ganglioglioma 18
+    ## 6 Craniopharyngioma, Adamantinomatous Type 16
+    ## 7         Atypical Teratoid/Rhabdoid Tumor 12
+
+------------------------------------------------------------------------
 
 ## 3. Quality Control
 
-Two systematic issues in mass-spectrometry proteomics must be addressed before clustering or modelling:
+Two systematic issues in mass-spectrometry proteomics must be addressed
+before clustering or modelling:
 
-1. **Missing values.** Proteins below the detection limit are absent. Missingness is non-random (low-abundance proteins drop out more often). We remove proteins missing in more than `MISSING_THRESHOLD` of samples, then impute remaining NAs with KNN imputation.
-2. **Outlier samples.** Samples missing > 40% of the remaining proteins likely reflect technical failures and should be dropped before any analysis that assumes a complete matrix.
+1.  **Missing values.** Proteins below the detection limit are absent.
+    Missingness is non-random (low-abundance proteins drop out more
+    often). We remove proteins missing in more than `MISSING_THRESHOLD`
+    of samples, then impute remaining NAs with KNN imputation.
+2.  **Outlier samples.** Samples missing \> 40% of the remaining
+    proteins likely reflect technical failures and should be dropped
+    before any analysis that assumes a complete matrix.
 
-```{r qc-missing-plot, fig.width=8, fig.height=5}
+``` r
 missing_per_protein <- colMeans(is.na(prot_wide))
 missing_per_sample <- rowMeans(is.na(prot_wide))
 
@@ -345,14 +483,20 @@ data.frame(missing_rate = missing_per_protein) |>
   theme_bw(base_size = 12)
 ```
 
-```{r qc-filter-impute}
+<img src="figures/qc-missing-plot-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 # 1. Remove high-missing proteins
 prot_filtered <- prot_wide[, missing_per_protein <= MISSING_THRESHOLD]
 cat(sprintf("Proteins removed (> %d%% missing): %d | Remaining: %d\n",
             as.integer(MISSING_THRESHOLD * 100),
             ncol(prot_wide) - ncol(prot_filtered),
             ncol(prot_filtered)))
+```
 
+    ## Proteins removed (> 30% missing): 0 | Remaining: 6429
+
+``` r
 # 2. Remove outlier samples
 outlier_samples <- names(missing_per_sample[missing_per_sample > 0.40])
 if (length(outlier_samples) > 0) {
@@ -360,14 +504,47 @@ if (length(outlier_samples) > 0) {
   prot_filtered <- prot_filtered[!rownames(prot_filtered) %in% outlier_samples, ]
 } else {
   cat("No outlier samples detected.\n")}
+```
 
+    ## No outlier samples detected.
+
+``` r
 # 3. KNN imputation for remaining NAs
 cat("Running KNN imputation (k = 10) on global proteome...\n")
+```
+
+    ## Running KNN imputation (k = 10) on global proteome...
+
+``` r
 prot_imputed <- prot_filtered |>
   t() |>
   impute.knn(k = 10) |>
   _$data |> t()
+```
 
+    ## Cluster size 6429 broken into 5848 581 
+    ## Cluster size 5848 broken into 3800 2048 
+    ## Cluster size 3800 broken into 678 3122 
+    ## Done cluster 678 
+    ## Cluster size 3122 broken into 22 3100 
+    ## Done cluster 22 
+    ## Cluster size 3100 broken into 1999 1101 
+    ## Cluster size 1999 broken into 934 1065 
+    ## Done cluster 934 
+    ## Done cluster 1065 
+    ## Done cluster 1999 
+    ## Done cluster 1101 
+    ## Done cluster 3100 
+    ## Done cluster 3122 
+    ## Done cluster 3800 
+    ## Cluster size 2048 broken into 1275 773 
+    ## Done cluster 1275 
+    ## Done cluster 773 
+    ## Done cluster 2048 
+    ## Done cluster 5848 
+    ## Done cluster 581
+
+``` r
 # Strip cBioPortal "|GENENAME" suffix and pipe characters once, so every
 # downstream step sees clean, formula-safe gene symbols.
 colnames(prot_imputed) <- str_remove(colnames(prot_imputed), "\\|.*$")
@@ -375,7 +552,11 @@ colnames(prot_imputed) <- gsub("\\|", "_", colnames(prot_imputed))
 
 cat("Final global-proteomics matrix:", nrow(prot_imputed), "samples ×",
     ncol(prot_imputed), "proteins\n")
+```
 
+    ## Final global-proteomics matrix: 218 samples × 6429 proteins
+
+``` r
 # Same QC pass for phosphoproteomics — different matrix, same logic
 phos_miss_protein <- colMeans(is.na(phos_wide))
 phos_miss_sample <- rowMeans(is.na(phos_wide))
@@ -384,17 +565,46 @@ phos_outliers <- names(phos_miss_sample[phos_miss_sample > 0.40])
 if (length(phos_outliers) > 0) {
   phos_filtered <- phos_filtered[!rownames(phos_filtered) %in% phos_outliers, ]}
 cat("Running KNN imputation on phosphoproteome (k = 10)...\n")
+```
+
+    ## Running KNN imputation on phosphoproteome (k = 10)...
+
+``` r
 phos_imputed <- phos_filtered |>
   t() |>
   impute.knn(k = 10) |>
   _$data |> t()
+```
+
+    ## Cluster size 4548 broken into 4081 467 
+    ## Cluster size 4081 broken into 1445 2636 
+    ## Done cluster 1445 
+    ## Cluster size 2636 broken into 342 2294 
+    ## Done cluster 342 
+    ## Cluster size 2294 broken into 1820 474 
+    ## Cluster size 1820 broken into 1212 608 
+    ## Done cluster 1212 
+    ## Done cluster 608 
+    ## Done cluster 1820 
+    ## Done cluster 474 
+    ## Done cluster 2294 
+    ## Done cluster 2636 
+    ## Done cluster 4081 
+    ## Done cluster 467
+
+``` r
 cat("Final phosphoproteomics matrix:", nrow(phos_imputed), "samples ×",
     ncol(phos_imputed), "phosphosites")
 ```
 
-We also build a **`samples_matched`** helper at this point. Several downstream models (PLS-DA, RF, RSF, the §15 classifier) need the samples table aligned row-for-row with the proteomics matrix, and creating this once upfront eliminates a class of subtle indexing bugs.
+    ## Final phosphoproteomics matrix: 217 samples × 4548 phosphosites
 
-```{r samples-matched}
+We also build a **`samples_matched`** helper at this point. Several
+downstream models (PLS-DA, RF, RSF, the §15 classifier) need the samples
+table aligned row-for-row with the proteomics matrix, and creating this
+once upfront eliminates a class of subtle indexing bugs.
+
+``` r
 # Align samples table to the rows of prot_imputed (after QC dropped outliers)
 samples_matched <- samples[match(rownames(prot_imputed), samples$sample_id), ]
 stopifnot(all(rownames(prot_imputed) == samples_matched$sample_id))
@@ -402,31 +612,66 @@ stopifnot(all(rownames(prot_imputed) == samples_matched$sample_id))
 # A factor of histological subtype, used as the response in supervised viz below
 Y <- factor(samples_matched$cancer_type_detailed)
 cat("samples_matched aligned:", nrow(samples_matched), "rows\n")
+```
+
+    ## samples_matched aligned: 218 rows
+
+``` r
 cat("Class distribution (Y):\n"); print(table(Y))
 ```
 
----
+    ## Class distribution (Y):
+
+    ## Y
+    ##         Atypical Teratoid/Rhabdoid Tumor 
+    ##                                       12 
+    ## Craniopharyngioma, Adamantinomatous Type 
+    ##                                       16 
+    ##                        Ependymomal Tumor 
+    ##                                       32 
+    ##                            Ganglioglioma 
+    ##                                       18 
+    ##                          Medulloblastoma 
+    ##                                       22 
+    ##             Pediatric High Grade Gliomas 
+    ##                                       25 
+    ##              Pediatric Low Grade Gliomas 
+    ##                                       93
+
+------------------------------------------------------------------------
 
 ## 4. Exploratory Analysis
 
-Before committing to NMF, we look at the data with three complementary projections. None of these define our final clusters; their job is only to confirm that meaningful structure exists, and to flag whether that structure is dominated by a small number of subtypes.
+Before committing to NMF, we look at the data with three complementary
+projections. None of these define our final clusters; their job is only
+to confirm that meaningful structure exists, and to flag whether that
+structure is dominated by a small number of subtypes.
 
 ### 4.1 PCA
 
-PCA gives a first, unsupervised look. We deliberately leave the data un-scaled here because the cBioPortal proteomics file is already z-scored per protein.
+PCA gives a first, unsupervised look. We deliberately leave the data
+un-scaled here because the cBioPortal proteomics file is already
+z-scored per protein.
 
-```{r pca}
+``` r
 prot_scaled <- prot_imputed # data is already z-scored upstream
 pca_res <- prcomp(prot_scaled, scale. = FALSE)
 var_expl <- round(100 * pca_res$sdev^2 / sum(pca_res$sdev^2), 2)
 
 cat(sprintf("Top 3 PCs explain %.1f%% of total variance.\n",
             sum(var_expl[1:3])))
+```
+
+    ## Top 3 PCs explain 45.8% of total variance.
+
+``` r
 cat(sprintf("Top %d PCs explain %.1f%% of total variance.",
             N_PCS, sum(var_expl[1:N_PCS])))
 ```
 
-```{r scree-plot, fig.width=8, fig.height=5}
+    ## Top 25 PCs explain 76.8% of total variance.
+
+``` r
 data.frame(PC = seq_along(var_expl), variance = var_expl) |>
   filter(PC <= 100) |>
   ggplot(aes(x = PC, y = variance)) +
@@ -442,7 +687,9 @@ data.frame(PC = seq_along(var_expl), variance = var_expl) |>
   theme_bw(base_size = 12)
 ```
 
-```{r pca-sanity, fig.width=9, fig.height=6}
+<img src="figures/scree-plot-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 pca_df <- as.data.frame(pca_res$x[, 1:5]) |>
   rownames_to_column("sample_id") |>
   left_join(select(samples, sample_id, cancer_type_detailed), by = "sample_id")
@@ -457,11 +704,16 @@ ggplot(pca_df, aes(x = PC1, y = PC2, colour = cancer_type_detailed)) +
   theme_bw(base_size = 12)
 ```
 
+<img src="figures/pca-sanity-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
 ### 4.2 PLS-DA (supervised projection by histology)
 
-PLS-DA asks the complementary question: if we explicitly use histology as the response, how separable are the subtypes in proteomic space? Strong separation here means histology is a real (but not necessarily complete) source of variation.
+PLS-DA asks the complementary question: if we explicitly use histology
+as the response, how separable are the subtypes in proteomic space?
+Strong separation here means histology is a real (but not necessarily
+complete) source of variation.
 
-```{r plsda, fig.width=9, fig.height=7}
+``` r
 plsda_res <- plsda(prot_imputed, Y, ncomp = 5)
 plotIndiv(plsda_res, comp = c(1, 2), group = Y,
           ind.names = FALSE, ellipse = TRUE, legend = TRUE,
@@ -471,7 +723,9 @@ plotIndiv(plsda_res, comp = c(1, 2), group = Y,
           title = "PLS-DA of QC-passed proteomics (components 1 vs 2)")
 ```
 
-```{r plsda-perf, fig.width=8, fig.height=5}
+<img src="figures/plsda-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 set.seed(42)
 perf_res <- perf(plsda_res, validation = "Mfold", folds = 5,
                  nrepeat = 10, progressBar = FALSE)
@@ -481,25 +735,34 @@ plot(perf_res, col = color.mixo(1:3),
      ylab = "Classification error rate (5-fold CV, 10 repeats)")
 ```
 
-```{r plsda-loadings-comp1, fig.width=8, fig.height=7}
+<img src="figures/plsda-perf-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 plotLoadings(plsda_res, comp = 1, method = "mean", contrib = "max",
              ndisplay = 20,
              title = "Top 20 proteins by loading magnitude, PLS-DA component 1",
              size.title = 0.9)
 ```
 
-```{r plsda-loadings-comp2, fig.width=8, fig.height=7}
+<img src="figures/plsda-loadings-comp1-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 plotLoadings(plsda_res, comp = 2, method = "mean", contrib = "max",
              ndisplay = 20,
              title = "Top 20 proteins by loading magnitude, PLS-DA component 2",
              size.title = 0.9)
 ```
 
+<img src="figures/plsda-loadings-comp2-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
 ### 4.3 Sparse PLS-DA (feature selection by histology)
 
-sPLS-DA adds an L1 penalty so that each component is built from only a few proteins. This is a useful first pass at "which proteins distinguish which histology?", and the chosen proteins reappear in the differential expression section later.
+sPLS-DA adds an L1 penalty so that each component is built from only a
+few proteins. This is a useful first pass at “which proteins distinguish
+which histology?”, and the chosen proteins reappear in the differential
+expression section later.
 
-```{r splsda-tune, fig.width=8, fig.height=5}
+``` r
 set.seed(42)
 tune_splsda <- tune.splsda(
   X = prot_imputed, Y = Y, ncomp = 3,
@@ -507,6 +770,12 @@ tune_splsda <- tune.splsda(
   validation = "Mfold", folds = 5, nrepeat = 10,
   dist = "centroids.dist", progressBar = FALSE)
 tune_splsda$choice.keepX
+```
+
+    ## comp1 comp2 comp3 
+    ##    50    20    30
+
+``` r
 # mixOmics' plot.tune.splsda returns a ggplot, so add the title via ggtitle()
 # rather than base graphics title() (which would error: plot.new not called).
 plot(tune_splsda) +
@@ -514,7 +783,9 @@ plot(tune_splsda) +
   theme(plot.title = element_text(size = 12, face = "bold"))
 ```
 
-```{r splsda-fit, fig.width=9, fig.height=7}
+<img src="figures/splsda-tune-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 optimal_keepX <- tune_splsda$choice.keepX
 splsda_res <- splsda(X = prot_imputed, Y = Y, ncomp = 3, keepX = optimal_keepX)
 plotIndiv(splsda_res, comp = c(1, 2), group = Y,
@@ -525,18 +796,24 @@ plotIndiv(splsda_res, comp = c(1, 2), group = Y,
           title = "sPLS-DA of QC-passed proteomics (sparse component projection)")
 ```
 
-```{r splsda-loadings, fig.width=8, fig.height=7}
+<img src="figures/splsda-fit-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 plotLoadings(splsda_res, comp = 1, method = "mean", contrib = "max",
              ndisplay = 20,
              title = "Top 20 proteins by loading magnitude, sPLS-DA component 1",
              size.title = 0.9)
 ```
 
+<img src="figures/splsda-loadings-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
 ### 4.4 UMAP (non-linear sanity check)
 
-UMAP is not used for clustering downstream, it is only a non-linear sanity check that the structure visible in PCA persists when distances are preserved more faithfully.
+UMAP is not used for clustering downstream, it is only a non-linear
+sanity check that the structure visible in PCA persists when distances
+are preserved more faithfully.
 
-```{r umap, fig.width=9, fig.height=6}
+``` r
 umap_res <- umap(prot_imputed)
 umap_df  <- as.data.frame(umap_res$layout) |> mutate(subtype = Y)
 ggplot(umap_df, aes(x = V1, y = V2, colour = subtype)) +
@@ -549,37 +826,64 @@ ggplot(umap_df, aes(x = V1, y = V2, colour = subtype)) +
   theme_bw(base_size = 12)
 ```
 
----
+<img src="figures/umap-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+------------------------------------------------------------------------
 
 ## 5. Dimensionality Reduction (PCA to NMF input)
 
-Running NMF directly on ~6,000 protein columns is noisy and slow. We compress the matrix to its top `N_PCS` principal components and shift the resulting score matrix to be non-negative (NMF's only hard requirement). The shift is a uniform additive constant and therefore preserves all pairwise distances.
+Running NMF directly on ~6,000 protein columns is noisy and slow. We
+compress the matrix to its top `N_PCS` principal components and shift
+the resulting score matrix to be non-negative (NMF’s only hard
+requirement). The shift is a uniform additive constant and therefore
+preserves all pairwise distances.
 
-```{r nmf-input}
+``` r
 pca_scores <- pca_res$x[, 1:N_PCS]
 pca_scores_nn <- pca_scores - min(pca_scores)
 
 cat("NMF input matrix:", nrow(pca_scores_nn), "samples ×",
     ncol(pca_scores_nn), "PCs\n")
+```
+
+    ## NMF input matrix: 218 samples × 25 PCs
+
+``` r
 cat("Value range: [", round(min(pca_scores_nn), 3), ",",
     round(max(pca_scores_nn), 3), "]")
 ```
 
----
+    ## Value range: [ 0 , 82.315 ]
+
+------------------------------------------------------------------------
 
 ## 6. Selecting the Number of Clusters (k)
 
-**Note on `BEST_K`.** Automated metrics on this dataset tend to favour very low k (2–3), which collapses biologically distinct subtypes (e.g. HGG vs LGG) into a single cluster. The default fallback is `BEST_K = 5`.
+**Note on `BEST_K`.** Automated metrics on this dataset tend to favour
+very low k (2–3), which collapses biologically distinct subtypes
+(e.g. HGG vs LGG) into a single cluster. The default fallback is
+`BEST_K = 5`.
 
-We sweep k from `K_MIN` to `K_MAX` and evaluate three complementary stability metrics derived from the NMF consensus matrix:
+We sweep k from `K_MIN` to `K_MAX` and evaluate three complementary
+stability metrics derived from the NMF consensus matrix:
 
-- **Cophenetic correlation**: how faithfully the consensus matrix preserves sample distances (close to 1 = stable).
-- **Dispersion**: how bimodal the consensus matrix is (values close to 0 or 1 are good).
-- **Silhouette score**: how well-separated clusters are in feature space.
+- **Cophenetic correlation**: how faithfully the consensus matrix
+  preserves sample distances (close to 1 = stable).
+- **Dispersion**: how bimodal the consensus matrix is (values close to 0
+  or 1 are good).
+- **Silhouette score**: how well-separated clusters are in feature
+  space.
 
-**Bug fixed in v3:** The NMF R package's convention is features × samples (features as rows, samples as columns). pca_scores_nn is 218 samples × 25 PCs. When you pass it directly (without transpose), NMF treats the 25 PCs as "samples" and the 218 rows as "features" — so it clusters the 25 PCs into k groups, which is meaningless. Passing t(pca_scores_nn) makes it 25 PCs × 218 samples, so NMF correctly treats the 218 samples as the things being clustered and the 25 PCs as their features. This is what the current code does.
+**Bug fixed in v3:** The NMF R package’s convention is features ×
+samples (features as rows, samples as columns). pca_scores_nn is 218
+samples × 25 PCs. When you pass it directly (without transpose), NMF
+treats the 25 PCs as “samples” and the 218 rows as “features” — so it
+clusters the 25 PCs into k groups, which is meaningless. Passing
+t(pca_scores_nn) makes it 25 PCs × 218 samples, so NMF correctly treats
+the 218 samples as the things being clustered and the 25 PCs as their
+features. This is what the current code does.
 
-```{r nmf-sweep, eval=TRUE, echo=TRUE, cache=TRUE}
+``` r
 # Slowest cell in the notebook. Set cache=TRUE after first run.
 # Note the transpose: NMF treats columns as samples for clustering purposes,
 # and the final NMF below uses the same orientation.
@@ -592,14 +896,37 @@ nmf_estimates <- nmf(
   .options = "v")
 ```
 
-```{r k-metrics, eval=TRUE, echo=TRUE, fig.width=9, fig.height=6}
+    ## Compute NMF rank= 2  ... + measures ... OK
+    ## Compute NMF rank= 3  ... + measures ... OK
+    ## Compute NMF rank= 4  ... + measures ... OK
+    ## Compute NMF rank= 5  ... + measures ... OK
+    ## Compute NMF rank= 6  ... + measures ... OK
+    ## Compute NMF rank= 7  ... + measures ... OK
+    ## Compute NMF rank= 8  ... + measures ... OK
+
+``` r
 k_metrics <- nmf_estimates$measures |>
   as_tibble() |>
   rename(k = rank, silhouette = silhouette.consensus) |>
   select(k, cophenetic, dispersion, silhouette, rss)
 
 cat("Metrics across k:\n"); print(k_metrics)
+```
 
+    ## Metrics across k:
+
+    ## # A tibble: 7 × 5
+    ##       k cophenetic dispersion silhouette     rss
+    ##   <dbl>      <dbl>      <dbl>      <dbl>   <dbl>
+    ## 1     2      0.875      0.411      0.660 219221.
+    ## 2     3      0.896      0.567      0.695 151875.
+    ## 3     4      0.852      0.483      0.506 119961.
+    ## 4     5      0.807      0.485      0.388  91029.
+    ## 5     6      0.846      0.557      0.400  77961.
+    ## 6     7      0.819      0.597      0.334  68066.
+    ## 7     8      0.848      0.637      0.369  60830.
+
+``` r
 k_metrics |>
   pivot_longer(-k, names_to = "metric", values_to = "value") |>
   ggplot(aes(x = k, y = value)) +
@@ -613,7 +940,9 @@ k_metrics |>
   theme_bw(base_size = 12)
 ```
 
-```{r select-k-bio, fig.width=12, fig.height=5}
+<img src="figures/k-metrics-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 # Compute mean cluster purity across k: fraction of the most common histology
 # per cluster, averaged across clusters. Captures biological resolution
 # independently of stability metrics.
@@ -651,11 +980,28 @@ k_metrics |>
        x = "Number of clusters (k)", y = "Metric value") +
   theme_bw(base_size = 11) +
   theme(plot.subtitle = element_text(size = 9))
+```
 
+<img src="figures/select-k-bio-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 cat("Purity by k:\n"); print(purity_by_k)
 ```
 
-```{r select-k}
+    ## Purity by k:
+
+    ## # A tibble: 7 × 2
+    ##       k mean_purity
+    ##   <int>       <dbl>
+    ## 1     2       0.514
+    ## 2     3       0.582
+    ## 3     4       0.494
+    ## 4     5       0.563
+    ## 5     6       0.595
+    ## 6     7       0.619
+    ## 7     8       0.690
+
+``` r
 # Use BEST_K = 5 as a sensible default for this cohort. If the sweep above
 # has been run and k_metrics exists, prefer the data-driven choice (highest
 # dispersion).
@@ -672,19 +1018,25 @@ if (exists("k_metrics")) {
 }
 ```
 
----
+    ## Data-driven k = 3  (silhouette = 0.695, cophenetic = 0.896)
+
+------------------------------------------------------------------------
 
 ## 7. Consensus NMF Clustering
 
-With `BEST_K` chosen, we run a final NMF and extract the consensus matrix and cluster labels.
+With `BEST_K` chosen, we run a final NMF and extract the consensus
+matrix and cluster labels.
 
 **Interpreting the consensus heatmap:**
 
-- Dark blue diagonal blocks indicate patients always cluster together (stable).
-- Light off-diagonal regions indicate patients from different clusters never co-cluster (good separation).
-- Mixed histologies within a cluster indicate cross-boundary molecular grouping, a key finding of the original paper.
+- Dark blue diagonal blocks indicate patients always cluster together
+  (stable).
+- Light off-diagonal regions indicate patients from different clusters
+  never co-cluster (good separation).
+- Mixed histologies within a cluster indicate cross-boundary molecular
+  grouping, a key finding of the original paper.
 
-```{r nmf-final, cache=FALSE}
+``` r
 nmf_best <- nmf(
   t(pca_scores_nn), # transpose: features (PCs) as rows, samples as columns
   rank = BEST_K,
@@ -692,7 +1044,14 @@ nmf_best <- nmf(
   seed = 42,
   method = "brunet",
   .options = "vr")
+```
 
+    ## Runs: |                                                        Runs: |                                                  |   0%Runs: |                                                        Runs: |==================================================| 100%
+    ## System time:
+    ##    user  system elapsed 
+    ##    2.98    0.05    8.14
+
+``` r
 # Extract consensus matrix
 cons_matrix <- consensus(nmf_best) # 218×218 expected
 
@@ -706,10 +1065,21 @@ cluster_labels <- apply(t(coef_mat), 1, which.max)
 names(cluster_labels) <- colnames(coef_mat)
 
 cat("cons_matrix dim:", dim(cons_matrix), "\n")
+```
+
+    ## cons_matrix dim: 218 218
+
+``` r
 cat("Cluster distribution:\n"); print(table(cluster_labels))
 ```
 
-```{r consensus-heatmap, fig.width=10, fig.height=8}
+    ## Cluster distribution:
+
+    ## cluster_labels
+    ##  1  2  3 
+    ## 93 73 52
+
+``` r
 # Build the canonical sample annotation table. This is the single source of
 # truth for cluster + clinical metadata used by every downstream chunk.
 sample_ann <- tibble(sample_id = names(cluster_labels),
@@ -747,13 +1117,17 @@ pheatmap(cons_matrix_ordered,
   fontsize = 10)
 ```
 
----
+<img src="figures/consensus-heatmap-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+------------------------------------------------------------------------
 
 ## 8. Cluster Annotation
 
-Before running biology, we assemble a single tidy table that joins cluster labels with the patient-level survival and demographic fields. Doing this once here means later chunks can stay focused on modelling.
+Before running biology, we assemble a single tidy table that joins
+cluster labels with the patient-level survival and demographic fields.
+Doing this once here means later chunks can stay focused on modelling.
 
-```{r cluster-df}
+``` r
 cluster_df <- tibble(
   sample_id = names(cluster_labels),
   cluster = as.integer(cluster_labels)) |>
@@ -766,9 +1140,30 @@ cluster_df <- tibble(
     by = "sample_id")
 
 cat("Cluster sizes:\n"); cluster_df |> count(cluster) |> print()
-cat("Missing os_months:", sum(is.na(cluster_df$os_months)), "\n")
-cat("Missing dfs_months:", sum(is.na(cluster_df$dfs_months)), "\n")
+```
 
+    ## Cluster sizes:
+
+    ## # A tibble: 3 × 2
+    ##   cluster     n
+    ##     <int> <int>
+    ## 1       1    93
+    ## 2       2    73
+    ## 3       3    52
+
+``` r
+cat("Missing os_months:", sum(is.na(cluster_df$os_months)), "\n")
+```
+
+    ## Missing os_months: 7
+
+``` r
+cat("Missing dfs_months:", sum(is.na(cluster_df$dfs_months)), "\n")
+```
+
+    ## Missing dfs_months: 7
+
+``` r
 # Per-cluster survival summary (records, events, median OS, etc.)
 cluster_df |>
   filter(!is.na(os_months)) |>
@@ -782,13 +1177,24 @@ cluster_df |>
   )
 ```
 
----
+    ## # A tibble: 3 × 6
+    ##   cluster     n n_events event_rate median_os mean_os
+    ##     <int> <int>    <int>      <dbl>     <dbl>   <dbl>
+    ## 1       1    92       33       35.9      32.5    41  
+    ## 2       2    73       13       17.8      34      47.4
+    ## 3       3    46        1        2.2      38.5    52.9
+
+------------------------------------------------------------------------
 
 ## 9. Histological Composition per Cluster
 
-Do the proteomics-derived clusters recapitulate known histology, or do they reveal cross-boundary groupings? This needs to be answered before survival analysis: a cluster that is 100% Medulloblastoma is just re-discovering the diagnosis, while a cluster that mixes histologies is genuinely informative.
+Do the proteomics-derived clusters recapitulate known histology, or do
+they reveal cross-boundary groupings? This needs to be answered before
+survival analysis: a cluster that is 100% Medulloblastoma is just
+re-discovering the diagnosis, while a cluster that mixes histologies is
+genuinely informative.
 
-```{r histo-composition, fig.width=11, fig.height=7}
+``` r
 # Short display names for the 7 histological subtypes, long strings break axes
 histo_short <- c(
   "Atypical Teratoid/Rhabdoid Tumor" = "ATRT",
@@ -837,7 +1243,9 @@ comp_df |>
   theme(axis.text.x = element_text(angle = 12, hjust = 1))
 ```
 
-```{r histo-reverse, fig.width=10, fig.height=5}
+<img src="figures/histo-composition-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 # Reverse view: for each histological diagnosis, how are its patients
 # distributed across proteomic subtypes? Shows that most diagnoses are
 # molecularly heterogeneous, not captured by a single cluster.
@@ -858,11 +1266,50 @@ comp_df |>
   theme(axis.text.x = element_text(angle = 18, hjust = 1))
 ```
 
-```{r histo-tables}
+<img src="figures/histo-reverse-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 table(sample_ann$cluster, sample_ann$cancer_type_detailed)
+```
+
+    ##     
+    ##      Atypical Teratoid/Rhabdoid Tumor Craniopharyngioma, Adamantinomatous Type
+    ##   C1                               10                                       10
+    ##   C2                                2                                        4
+    ##   C3                                0                                        2
+    ##     
+    ##      Ependymomal Tumor Ganglioglioma Medulloblastoma
+    ##   C1                29             2              19
+    ##   C2                 3            16               3
+    ##   C3                 0             0               0
+    ##     
+    ##      Pediatric High Grade Gliomas Pediatric Low Grade Gliomas
+    ##   C1                           15                           8
+    ##   C2                            9                          36
+    ##   C3                            1                          49
+
+``` r
 prop.table(table(sample_ann$cluster, sample_ann$cancer_type_detailed),
            margin = 1) |> round(2)
+```
 
+    ##     
+    ##      Atypical Teratoid/Rhabdoid Tumor Craniopharyngioma, Adamantinomatous Type
+    ##   C1                             0.11                                     0.11
+    ##   C2                             0.03                                     0.05
+    ##   C3                             0.00                                     0.04
+    ##     
+    ##      Ependymomal Tumor Ganglioglioma Medulloblastoma
+    ##   C1              0.31          0.02            0.20
+    ##   C2              0.04          0.22            0.04
+    ##   C3              0.00          0.00            0.00
+    ##     
+    ##      Pediatric High Grade Gliomas Pediatric Low Grade Gliomas
+    ##   C1                         0.16                        0.09
+    ##   C2                         0.12                        0.49
+    ##   C3                         0.02                        0.94
+
+``` r
 # Top 3 dominant subtypes per cluster
 as.data.frame(table(sample_ann$cluster, sample_ann$cancer_type_detailed)) |>
   rename(cluster = Var1, subtype = Var2, n = Freq) |>
@@ -871,15 +1318,37 @@ as.data.frame(table(sample_ann$cluster, sample_ann$cancer_type_detailed)) |>
   arrange(cluster, desc(n))
 ```
 
-**What to look for:** Clusters dominated by a single histological subtype mostly recapitulate known diagnoses. Clusters that mix several subtypes, for example LGG alongside Ependymoma, are more interesting (and common here): they suggest a shared underlying molecular programme that cuts across classical histological boundaries, which is the central finding of Petralia et al. (2020).
+    ## # A tibble: 9 × 3
+    ## # Groups:   cluster [3]
+    ##   cluster subtype                                      n
+    ##   <fct>   <fct>                                    <int>
+    ## 1 C1      Ependymomal Tumor                           29
+    ## 2 C1      Medulloblastoma                             19
+    ## 3 C1      Pediatric High Grade Gliomas                15
+    ## 4 C2      Pediatric Low Grade Gliomas                 36
+    ## 5 C2      Ganglioglioma                               16
+    ## 6 C2      Pediatric High Grade Gliomas                 9
+    ## 7 C3      Pediatric Low Grade Gliomas                 49
+    ## 8 C3      Craniopharyngioma, Adamantinomatous Type     2
+    ## 9 C3      Pediatric High Grade Gliomas                 1
 
----
+**What to look for:** Clusters dominated by a single histological
+subtype mostly recapitulate known diagnoses. Clusters that mix several
+subtypes, for example LGG alongside Ependymoma, are more interesting
+(and common here): they suggest a shared underlying molecular programme
+that cuts across classical histological boundaries, which is the central
+finding of Petralia et al. (2020).
+
+------------------------------------------------------------------------
 
 ## 10. Survival Analysis (Kaplan–Meier)
 
-A key clinical test: do the identified subgroups have different survival outcomes? We use Kaplan–Meier curves and the log-rank test. A significant p-value (< 0.05) means the clusters capture clinically meaningful biology, not just abstract molecular similarity.
+A key clinical test: do the identified subgroups have different survival
+outcomes? We use Kaplan–Meier curves and the log-rank test. A
+significant p-value (\< 0.05) means the clusters capture clinically
+meaningful biology, not just abstract molecular similarity.
 
-```{r survival-prep}
+``` r
 # For patients with multiple samples, keep only one row per patient
 surv_data <- cluster_df |>
   filter(!is.na(os_months) & os_months > 0) |>
@@ -890,7 +1359,9 @@ surv_data <- cluster_df |>
 cat("Patients:", nrow(surv_data), "Events:", sum(surv_data$os_event))
 ```
 
-```{r km-plot, fig.width=10, fig.height=8}
+    ## Patients: 187 Events: 37
+
+``` r
 fit <- survfit(Surv(os_days, os_event) ~ cluster, data = surv_data)
 
 # Interpolate Set2 to BEST_K colours so the palette never runs short
@@ -930,20 +1401,36 @@ km_plot$table <- km_plot$table +
 grid.arrange(km_plot$plot, km_plot$table, ncol = 1, heights = c(3, 1.2))
 ```
 
-```{r km-summary}
+<img src="figures/km-plot-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 km_fit_months <- survfit(Surv(os_months, os_event) ~ cluster, data = surv_data)
 summary(km_fit_months)$table[, c("records", "events", "median", "0.95LCL", "0.95UCL")]
 ```
 
----
+    ##            records events median 0.95LCL 0.95UCL
+    ## cluster=C1      80     28    108      66      NA
+    ## cluster=C2      65      8     NA     122      NA
+    ## cluster=C3      42      1     NA      NA      NA
+
+------------------------------------------------------------------------
 
 ## 11. Cox Proportional Hazards Model
 
-The KM curves answer "are the clusters different?". The Cox model answers the next question: is that difference still there after we adjust for what we already knew about the patient? If `cluster` retains a significant hazard ratio after adjustment, the proteomic structure is contributing risk information beyond clinical baseline.
+The KM curves answer “are the clusters different?”. The Cox model
+answers the next question: is that difference still there after we
+adjust for what we already knew about the patient? If `cluster` retains
+a significant hazard ratio after adjustment, the proteomic structure is
+contributing risk information beyond clinical baseline.
 
-In this version the clinical baseline is no longer just age + sex. We add WHO grade, extent of resection, treatment received (radiation, chemotherapy), and the canonical pediatric brain tumour driver flags (`braf_status`, `h3f3a_ctnnb1_status`, etc.). Beating this baseline is a much more meaningful demonstration that proteomics adds prognostic information than beating age + sex alone.
+In this version the clinical baseline is no longer just age + sex. We
+add WHO grade, extent of resection, treatment received (radiation,
+chemotherapy), and the canonical pediatric brain tumour driver flags
+(`braf_status`, `h3f3a_ctnnb1_status`, etc.). Beating this baseline is a
+much more meaningful demonstration that proteomics adds prognostic
+information than beating age + sex alone.
 
-```{r cox-regression}
+``` r
 # Assemble extended clinical covariates. Some columns may have very sparse
 # coverage in this cohort, we collapse the driver flags into a single
 # binary "any_known_driver" column to keep the model identifiable.
@@ -967,7 +1454,11 @@ cox_data <- surv_data |>
 
 cat(sprintf("Cox model: %d patients (%d events), %d clusters\n",
             nrow(cox_data), sum(cox_data$os_event), nlevels(cox_data$cluster)))
+```
 
+    ## Cox model: 187 patients (37 events), 3 clusters
+
+``` r
 # Extended-baseline Cox model: clinical covariates + cluster
 # Note: we use the binary high/low grade collapse rather than the full
 # ordered factor, because some grade levels have very few events and
@@ -993,7 +1484,39 @@ coef_tbl <- summary(cox_fit)$coefficients |>
     across(c(log_HR, HR, SE, z_score), ~ round(., 3)),
     p_value = formatC(p_value, format = "g", digits = 3))
 cat("\nCox model coefficients (extended baseline)\n"); print(coef_tbl, row.names = FALSE)
+```
 
+    ## 
+    ## Cox model coefficients (extended baseline)
+
+    ##                                        term log_HR     HR    SE z_score
+    ##                                   clusterC2  0.006  1.006 0.489   0.013
+    ##                                   clusterC3 -1.328  0.265 1.142  -1.163
+    ##                                         age  0.000  1.000 0.000   0.750
+    ##                                     sexMale -0.218  0.804 0.370  -0.589
+    ##                          grade_binHighGrade  2.641 14.028 0.700   3.772
+    ##  extent_resectionGross/Near total resection -1.348  0.260 0.975  -1.382
+    ##                         extent_resectionN/A     NA     NA 0.000      NA
+    ##              extent_resectionNot Applicable -1.213  0.297 1.093  -1.110
+    ##           extent_resectionPartial resection -0.715  0.489 0.930  -0.769
+    ##                             radiation_ynYes -0.624  0.536 0.524  -1.192
+    ##                          chemotherapy_ynYes -0.131  0.877 0.410  -0.320
+    ##                   any_known_driverAnyDriver -0.636  0.530 0.804  -0.791
+    ##   p_value sig
+    ##      0.99    
+    ##     0.245    
+    ##     0.453    
+    ##     0.556    
+    ##  0.000162 ***
+    ##     0.167    
+    ##        NA    
+    ##     0.267    
+    ##     0.442    
+    ##     0.233    
+    ##     0.749    
+    ##     0.429
+
+``` r
 # Global model performance
 s <- summary(cox_fit)
 perf_tbl <- tibble(
@@ -1014,22 +1537,54 @@ perf_tbl <- tibble(
 print(perf_tbl, row.names = FALSE)
 ```
 
+    ## # A tibble: 11 × 2
+    ##    Metric                     Value   
+    ##    <chr>                      <chr>   
+    ##  1 Concordance (Harrell's C)  0.87    
+    ##  2 Concordance SE             0.024   
+    ##  3 Likelihood ratio test (χ²) 62.996  
+    ##  4 LRT p-value                2.56e-09
+    ##  5 Wald test (χ²)             41.25   
+    ##  6 Wald p-value               2.18e-05
+    ##  7 Score (log-rank) test (χ²) 76.319  
+    ##  8 Score p-value              7.56e-12
+    ##  9 AIC                        283.2   
+    ## 10 n (complete cases)         184     
+    ## 11 Events                     36
+
 **Interpreting the Cox output:**
 
-- HR > 1 = higher hazard (worse survival) relative to the reference level.
-- HR < 1 = lower hazard (better survival).
-- A small cluster with very few events (the Hauck–Donner / complete-separation case) will produce HR estimates with extreme SEs that should be ignored; the concordance statistic is the trustworthy global summary.
-- A cluster effect surviving adjustment for the extended clinical baseline is the descriptive evidence that the proteomic stratification is prognostically informative beyond standard-of-care variables. We deliberately stop at description and do not build a per-patient predictive risk score on this cohort, with only ≈ 36 OS events the events-per-parameter ratio is too low to support an honest predictive claim. The §14 therapeutic-vulnerability arm and the §15 molecular classifier sidestep this small-event problem by addressing different questions.
+- HR \> 1 = higher hazard (worse survival) relative to the reference
+  level.
+- HR \< 1 = lower hazard (better survival).
+- A small cluster with very few events (the Hauck–Donner /
+  complete-separation case) will produce HR estimates with extreme SEs
+  that should be ignored; the concordance statistic is the trustworthy
+  global summary.
+- A cluster effect surviving adjustment for the extended clinical
+  baseline is the descriptive evidence that the proteomic stratification
+  is prognostically informative beyond standard-of-care variables. We
+  deliberately stop at description and do not build a per-patient
+  predictive risk score on this cohort, with only ≈ 36 OS events the
+  events-per-parameter ratio is too low to support an honest predictive
+  claim. The §14 therapeutic-vulnerability arm and the §15 molecular
+  classifier sidestep this small-event problem by addressing different
+  questions.
 
----
+------------------------------------------------------------------------
 
 ## 12. Differential Protein Expression (limma one-vs-rest)
 
-We identify proteins significantly up-regulated in each cluster relative to all other clusters combined. These become the molecular fingerprints of each subtype, and they also seed candidate cluster-marker shortlists used by the §14 therapeutic-target panel.
+We identify proteins significantly up-regulated in each cluster relative
+to all other clusters combined. These become the molecular fingerprints
+of each subtype, and they also seed candidate cluster-marker shortlists
+used by the §14 therapeutic-target panel.
 
-`limma` is well-validated for mass-spectrometry proteomics data (continuous, approximately normal after z-scoring) and handles the moderate sample sizes of this dataset well.
+`limma` is well-validated for mass-spectrometry proteomics data
+(continuous, approximately normal after z-scoring) and handles the
+moderate sample sizes of this dataset well.
 
-```{r limma-diff-expr}
+``` r
 common_samples <- base::intersect(rownames(prot_imputed), names(cluster_labels))
 prot_cl <- prot_imputed[common_samples, ]
 cl_vec  <- cluster_labels[common_samples]
@@ -1051,7 +1606,9 @@ all_markers <- unique(unlist(top_markers_all))
 length(all_markers)
 ```
 
-```{r limma-heatmap, fig.width=10, fig.height=9}
+    ## [1] 60
+
+``` r
 marker_cluster <- stack(top_markers_all) |>
   rename(protein = values, source_cluster = ind) |>
   distinct(protein, .keep_all = TRUE)
@@ -1094,20 +1651,39 @@ pheatmap(
 )
 ```
 
-```{r print-markers}
+<img src="figures/limma-heatmap-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 cat("Top 10 upregulated marker proteins per cluster:\n")
+```
+
+    ## Top 10 upregulated marker proteins per cluster:
+
+``` r
 for (cl in names(top_markers_all)) {
   cat(sprintf("\n  Cluster %s: %s\n", cl,
               paste(top_markers_all[[cl]][1:10], collapse = ", ")))}
 ```
 
----
+    ## 
+    ##   Cluster 1: SEPT8, NCAM2, SON, ARHGAP39, RBM25, RCAN1, HSPA12A, ACIN1, PRPF40A, TMOD2
+    ## 
+    ##   Cluster 2: IGSF8, LYNX1, PPP3CA, MDH1, TUBB4A, GNAO1, ADAM22, CNTNAP1, PHYHIP, NFASC
+    ## 
+    ##   Cluster 3: HIP1, LRP1, PHLDB1, SLC12A9, CC2D1A, SNX1, SLC9A7, NLGN1, CSPG4, SPRED1
+
+------------------------------------------------------------------------
 
 ## 13. Random Forest (classification by histology)
 
-These two ensemble models give a model-free, descriptive ranking of which individual proteins carry the strongest signal, first against histological subtype (Random Forest classifier) and then against OS event timing (Random Survival Forest). They do not produce a per-patient risk score; their role is to surface candidate proteins that subsequently feed into the cluster-marker tables in §14.
+These two ensemble models give a model-free, descriptive ranking of
+which individual proteins carry the strongest signal, first against
+histological subtype (Random Forest classifier) and then against OS
+event timing (Random Survival Forest). They do not produce a per-patient
+risk score; their role is to surface candidate proteins that
+subsequently feed into the cluster-marker tables in §14.
 
-```{r rf-classification, fig.width=10, fig.height=8}
+``` r
 rf_fit <- randomForest(x = prot_imputed,
                        y = Y,
                        ntree = 500,
@@ -1117,17 +1693,30 @@ varImpPlot(rf_fit, n.var = 25,
            cex = 0.85)
 ```
 
----
+<img src="figures/rf-classification-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+------------------------------------------------------------------------
 
 ## 14. Therapeutic Target Discovery
 
-This section is the precision-oncology deliverable. For each NMF cluster identified in §7, we build a per-cluster panel of candidate therapeutic targets supported by multiple, independent lines of evidence: cluster-specific overexpression (limma; pulled from §12), inferred kinase activity (KSEA on per-cluster phospho contrasts, substrates from OmniPath), brain cell-line dependency (DepMap CRISPR essentiality), and druggability (OpenTargets clinical-trial / approved-drug lookup). A target that scores well on at least two of these is a defensible candidate for a subtype-specific therapy panel.
+This section is the precision-oncology deliverable. For each NMF cluster
+identified in §7, we build a per-cluster panel of candidate therapeutic
+targets supported by multiple, independent lines of evidence:
+cluster-specific overexpression (limma; pulled from §12), inferred
+kinase activity (KSEA on per-cluster phospho contrasts, substrates from
+OmniPath), brain cell-line dependency (DepMap CRISPR essentiality), and
+druggability (OpenTargets clinical-trial / approved-drug lookup). A
+target that scores well on at least two of these is a defensible
+candidate for a subtype-specific therapy panel.
 
 ### 14.1 Per-cluster phosphosite contrasts (limma)
 
-Phospho rows in CPTAC follow `<GENE>_<start>_<end>_<x>_<y>_<RES><pos>`, e.g. `ALAD_214_215_1_1_S215`. We parse those into (gene, residue type, position) so we can join phosphosites to OmniPath kinase–substrate entries.
+Phospho rows in CPTAC follow `<GENE>_<start>_<end>_<x>_<y>_<RES><pos>`,
+e.g. `ALAD_214_215_1_1_S215`. We parse those into (gene, residue type,
+position) so we can join phosphosites to OmniPath kinase–substrate
+entries.
 
-```{r phos-parse, fig.width=7, fig.height=4}
+``` r
 # Parse CPTAC phospho IDs into (gene, residue type, position)
 parse_phospho_id <- function(ids) {
   m <- str_match(ids, "^([A-Z0-9]+)_\\d+_\\d+_\\d+_\\d+_([STY])(\\d+)$")
@@ -1141,7 +1730,11 @@ phos_meta <- parse_phospho_id(colnames(phos_imputed))
 parse_ok <- mean(!is.na(phos_meta$gene_symbol))
 cat(sprintf("Phospho ID parser: %.1f%% of %d sites parsed cleanly\n",
             100 * parse_ok, nrow(phos_meta)))
+```
 
+    ## Phospho ID parser: 89.4% of 4548 sites parsed cleanly
+
+``` r
 ggplot(phos_meta |> filter(!is.na(residue_type)),
        aes(x = residue_type)) +
   geom_bar(fill = "#4E79A7", colour = "white") +
@@ -1151,14 +1744,20 @@ ggplot(phos_meta |> filter(!is.na(residue_type)),
   theme_bw(base_size = 12)
 ```
 
-```{r phos-limma}
+<img src="figures/phos-parse-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 # One-vs-rest limma per cluster on the phosphoproteome
 phos_common <- base::intersect(rownames(phos_imputed), names(cluster_labels))
 phos_cl <- phos_imputed[phos_common, ]
 cl_vec_phos <- cluster_labels[phos_common]
 cat(sprintf("Phospho one-vs-rest contrasts on %d samples × %d phosphosites\n",
             nrow(phos_cl), ncol(phos_cl)))
+```
 
+    ## Phospho one-vs-rest contrasts on 217 samples × 4548 phosphosites
+
+``` r
 phos_de_by_cluster <- list()
 for (cl in sort(unique(cl_vec_phos))) {
   group <- ifelse(cl_vec_phos == cl, "Target", "Other")
@@ -1180,14 +1779,33 @@ phos_de_long <- bind_rows(phos_de_by_cluster) |>
   select(cluster, phosphosite, gene_symbol, residue_type, residue_offset,
          logFC_phos, P.Value, q)
 cat("Phospho DE table:", nrow(phos_de_long), "rows\n")
+```
+
+    ## Phospho DE table: 13644 rows
+
+``` r
 print(head(phos_de_long, 5))
 ```
 
+    ## # A tibble: 5 × 8
+    ##   cluster phosphosite         gene_symbol residue_type residue_offset logFC_phos
+    ##   <chr>   <chr>               <chr>       <chr>                 <int>      <dbl>
+    ## 1 C1      ALAD_214_215_1_1_S… ALAD        S                       215    -0.538 
+    ## 2 C1      ALDOA_36_39_1_1_S36 ALDOA       S                        36    -1.04  
+    ## 3 C1      ALDOA_36_39_1_1_S39 ALDOA       S                        39    -0.866 
+    ## 4 C1      ALDOA_46_52_1_1_S46 ALDOA       S                        46    -0.0574
+    ## 5 C1      ANK1_1684_1693_1_1… ANK1        S                      1686    -0.104 
+    ## # ℹ 2 more variables: P.Value <dbl>, q <dbl>
+
 ### 14.2 Kinase activity per cluster (KSEA)
 
-KSEA assigns each kinase a z-score per cluster from the mean log fold-change of its known phospho substrates relative to background. Substrates come from OmniPath, which aggregates PhosphoSitePlus, Signor, and others. Kinases with fewer than `KSEA_MIN_SUBSTRATES` matched substrates are dropped to avoid noisy estimates.
+KSEA assigns each kinase a z-score per cluster from the mean log
+fold-change of its known phospho substrates relative to background.
+Substrates come from OmniPath, which aggregates PhosphoSitePlus, Signor,
+and others. Kinases with fewer than `KSEA_MIN_SUBSTRATES` matched
+substrates are dropped to avoid noisy estimates.
 
-```{r ksea, fig.width=10, fig.height=8}
+``` r
 cache_file <- "./Data/omnipath_enzsub_human.csv"
 
 if (file.exists(cache_file)) {
@@ -1279,11 +1897,21 @@ if (!is.null(enzsub)) {
 }
 ```
 
+    ## OmniPath kinase–substrate entries (S/T/Y phosphorylation): 39391
+
+    ## Phosphosites with at least one OmniPath kinase: 659 / 4548 (14.5%)
+
+    ## KSEA results: 258 kinase × cluster rows
+
+<img src="figures/ksea-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
 ### 14.3 Cluster-marker shortlist (overexpressed proteins)
 
-Re-run the §12 limma machinery to recover the full statistics table per cluster (not just the top-20 names), then filter to genes that are up-regulated only, these are candidates for inhibition.
+Re-run the §12 limma machinery to recover the full statistics table per
+cluster (not just the top-20 names), then filter to genes that are
+up-regulated only, these are candidates for inhibition.
 
-```{r marker-shortlist}
+``` r
 # Per-cluster limma DE: full table this time, so we can apply our own thresholds.
 prot_de_full <- list()
 for (cl in sort(unique(cl_vec))) {
@@ -1312,14 +1940,29 @@ marker_panel <- prot_de_full |>
   ungroup()
 cat("Cluster marker shortlist:", nrow(marker_panel),
     "rows across", n_distinct(marker_panel$cluster), "clusters\n")
+```
+
+    ## Cluster marker shortlist: 150 rows across 3 clusters
+
+``` r
 print(marker_panel |> count(cluster, name = "n_candidates"))
 ```
 
+    ## # A tibble: 3 × 2
+    ##   cluster n_candidates
+    ##   <chr>          <int>
+    ## 1 C1                50
+    ## 2 C2                50
+    ## 3 C3                50
+
 ### 14.4 DepMap brain-line dependency
 
-Cross-reference the cluster-marker shortlist with CRISPR essentiality scores from DepMap, restricted to brain/CNS cell lines. A gene that is both upregulated in a cluster AND broadly essential in brain lines is a strong candidate for therapeutic inhibition.
+Cross-reference the cluster-marker shortlist with CRISPR essentiality
+scores from DepMap, restricted to brain/CNS cell lines. A gene that is
+both upregulated in a cluster AND broadly essential in brain lines is a
+strong candidate for therapeutic inhibition.
 
-```{r depmap, fig.width=10, fig.height=6}
+``` r
 # Local DepMap files downloaded from https://depmap.org/portal/download/all/
 # CRISPRGeneEffect.csv: Chronos gene effect scores (cell lines × genes)
 # Model.csv: cell line metadata (ModelID, OncotreeLineage, OncotreePrimaryDisease)
@@ -1327,7 +1970,11 @@ DEPMAP_CRISPR <- "./data/CRISPRGeneEffect.csv"
 DEPMAP_MODEL <- "./data/Model.csv"
 
 cat("Loading DepMap files...\n")
+```
 
+    ## Loading DepMap files...
+
+``` r
 # Model.csv has ModelID as first column; filter to brain/CNS lines
 model <- readr::read_csv(DEPMAP_MODEL, show_col_types = FALSE)
 brain_lines <- model |>
@@ -1335,7 +1982,11 @@ brain_lines <- model |>
            str_detect(toupper(OncotreePrimaryDisease), "BRAIN|GLIOMA|GLIOBLASTOMA|MEDULLOBLASTOMA|EPENDYMOMA")) |>
   pull(ModelID) |> unique()
 cat("Brain/CNS DepMap cell lines:", length(brain_lines), "\n")
+```
 
+    ## Brain/CNS DepMap cell lines: 127
+
+``` r
 # CRISPRGeneEffect.csv: rows = cell lines (ModelID), columns = "GENESYMBOL (ENTREZID)"
 # Read and pivot to long format for summarisation
 crispr_wide <- readr::read_csv(DEPMAP_CRISPR, show_col_types = FALSE)
@@ -1361,12 +2012,20 @@ dep_summary <- dep_long |>
 
 cat(sprintf("dep_summary: %d genes across %d brain lines\n",
             nrow(dep_summary), length(brain_lines)))
+```
 
+    ## dep_summary: 18435 genes across 127 brain lines
+
+``` r
 # Diagnostic: how many marker genes are in DepMap?
 overlap <- base::intersect(marker_panel$gene, dep_summary$gene_name)
 cat(sprintf("Gene overlap: %d / %d marker genes found in DepMap\n",
             length(overlap), n_distinct(marker_panel$gene)))
+```
 
+    ## Gene overlap: 149 / 150 marker genes found in DepMap
+
+``` r
 dependency_table <- marker_panel |>
   left_join(dep_summary, by = c("gene" = "gene_name")) |>
   mutate(dep_flag = !is.na(mean_ess) & essential)
@@ -1374,9 +2033,18 @@ dependency_table <- marker_panel |>
 cat(sprintf("Marker genes with DepMap entry: %d / %d (%.1f%%)\n",
             sum(!is.na(dependency_table$mean_ess)), nrow(dependency_table),
             100 * mean(!is.na(dependency_table$mean_ess))))
+```
+
+    ## Marker genes with DepMap entry: 149 / 150 (99.3%)
+
+``` r
 cat(sprintf("Cluster-marker x DepMap-essential overlaps: %d\n",
             sum(dependency_table$dep_flag, na.rm = TRUE)))
+```
 
+    ## Cluster-marker x DepMap-essential overlaps: 34
+
+``` r
 dependency_table |>
   filter(!is.na(mean_ess)) |>
   ggplot(aes(x = cluster, y = mean_ess, fill = cluster)) +
@@ -1393,11 +2061,14 @@ dependency_table |>
   theme_bw(base_size = 12)
 ```
 
+<img src="figures/depmap-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
 ### 14.5 Druggability annotation (OpenTargets)
 
-Cross-reference candidate genes with OpenTargets to flag which already have approved or clinical-trial drugs.
+Cross-reference candidate genes with OpenTargets to flag which already
+have approved or clinical-trial drugs.
 
-```{r druggability}
+``` r
 # Genes to exclude from druggability: pan-cytoskeletal or broadly expressed
 # proteins whose drugs are non-specific chemotherapy, not precision targets.
 DRUGGABILITY_EXCLUDE <- c("TUBB4A", "TUBB2A", "TUBA4A", "TUBB3", "TUBA1A", "ACTB", "ACTG1")
@@ -1422,7 +2093,11 @@ panel_candidates <- dependency_table |>
 panel_candidates <- union(panel_candidates, ksea_candidates)
 
 cat("Candidate genes for druggability lookup:", length(panel_candidates), "\n")
+```
 
+    ## Candidate genes for druggability lookup: 114
+
+``` r
 CT_FILE <- "./data/clinical_target_compact.csv"
 # Read the local OpenTargets file
 clinical_target <- readr::read_csv(CT_FILE, show_col_types = FALSE)
@@ -1436,7 +2111,11 @@ gene_map <- AnnotationDbi::select(
   filter(!is.na(ensembl_id))
 cat("Symbols mapped to Ensembl IDs:", nrow(gene_map), "/",
     length(panel_candidates), "\n")
+```
 
+    ## Symbols mapped to Ensembl IDs: 118 / 114
+
+``` r
 phase_levels <- c(
   "PHASE1" = 1, "PHASE2" = 2, "PHASE3" = 3, "PHASE4" = 4, "APPROVAL" = 4)
 
@@ -1450,7 +2129,11 @@ druggable_raw <- gene_map |>
   select(gene, chembl_id, max_phase)
 
 cat("Druggable hits (raw CHEMBL IDs):", nrow(druggable_raw), "\n")
+```
 
+    ## Druggable hits (raw CHEMBL IDs): 23
+
+``` r
 # Resolve CHEMBL IDs -> drug names via the ChEMBL REST API.
 # We only query the unique CHEMBL IDs (not one per gene-drug row) to
 # minimise requests. Each call hits: https://www.ebi.ac.uk/chembl/api/data/molecule/<ID>
@@ -1473,12 +2156,21 @@ resolve_chembl_name <- function(chembl_id) {
 
 unique_ids <- unique(druggable_raw$chembl_id)
 cat("Resolving", length(unique_ids), "unique CHEMBL IDs to drug names...\n")
+```
+
+    ## Resolving 21 unique CHEMBL IDs to drug names...
+
+``` r
 name_map <- tibble(
   chembl_id = unique_ids,
   drug_name = vapply(unique_ids, resolve_chembl_name, character(1)))
 cat(sprintf("Names resolved: %d / %d\n",
             sum(!is.na(name_map$drug_name)), length(unique_ids)))
+```
 
+    ## Names resolved: 21 / 21
+
+``` r
 druggable_table <- druggable_raw |>
   left_join(name_map, by = "chembl_id") |>
   # Fall back to chembl_id if name resolution failed
@@ -1486,15 +2178,47 @@ druggable_table <- druggable_raw |>
   select(gene, drug_name, chembl_id, max_phase)
 
 cat("Druggable hits returned:", nrow(druggable_table), "\n")
+```
+
+    ## Druggable hits returned: 23
+
+``` r
 if (nrow(druggable_table) > 0) print(head(druggable_table, 30))
 ```
 
+    ##      gene                         drug_name     chembl_id max_phase
+    ## 1    NPM1                        CRIZOTINIB  CHEMBL601719         4
+    ## 2    NPM1                         CERITINIB CHEMBL2403108         4
+    ## 3   PRKCG                       MIDOSTAURIN  CHEMBL608533         4
+    ## 4   ITGAV                         ABCIXIMAB CHEMBL1201584         4
+    ## 5  IL1RAP                        SPESOLIMAB CHEMBL4297911         4
+    ## 6   GRIK3                        TOPIRAMATE  CHEMBL220492         4
+    ## 7   GSK3B                 LITHIUM CARBONATE CHEMBL1200826         4
+    ## 8   GSK3B                   LITHIUM CITRATE CHEMBL2103738         4
+    ## 9    CDK4                       PALBOCICLIB  CHEMBL189963         4
+    ## 10   CDK4              RIBOCICLIB SUCCINATE CHEMBL3707266         4
+    ## 11   CDK4                       ABEMACICLIB CHEMBL3301610         4
+    ## 12   CDK4                       TRILACICLIB CHEMBL3894860         4
+    ## 13   CDK4       TRILACICLIB DIHYDROCHLORIDE CHEMBL4650272         4
+    ## 14   AKT1                      CAPIVASERTIB CHEMBL2325741         4
+    ## 15  ROCK1 RIPASUDIL HYDROCHLORIDE DIHYDRATE CHEMBL4594454         4
+    ## 16  ROCK1             NETARSUDIL DIMESYLATE CHEMBL4594251         4
+    ## 17  ROCK1                           FASUDIL   CHEMBL38380         4
+    ## 18  ROCK1                        NETARSUDIL CHEMBL4594250         4
+    ## 19  ROCK1                       BELUMOSUDIL CHEMBL2005186         4
+    ## 20  ROCK1              BELUMOSUDIL MESYLATE CHEMBL4802130         4
+    ## 21  ROCK1                         RIPASUDIL CHEMBL3426621         4
+    ## 22  PRKCA                       MIDOSTAURIN  CHEMBL608533         4
+    ## 23  PRKCD                       MIDOSTAURIN  CHEMBL608533         4
 
 ### 14.6 Integrated per-cluster therapeutic panel
 
-Combine the four evidence streams into a single ranked panel per cluster. The composite score is a sum of standardised components (each missing stream contributes 0), keeping the ranking robust when individual data sources are unavailable.
+Combine the four evidence streams into a single ranked panel per
+cluster. The composite score is a sum of standardised components (each
+missing stream contributes 0), keeping the ranking robust when
+individual data sources are unavailable.
 
-```{r integrated-panel, fig.width=11, fig.height=9}
+``` r
 panel <- dependency_table |>
   mutate(z_overexp = as.numeric(scale(logFC))) |>
   mutate(z_essent = ifelse(is.na(mean_ess), 0,
@@ -1522,7 +2246,11 @@ panel <- dependency_table |>
 
 cat("Final panel rows:", nrow(panel),
     "across", n_distinct(panel$cluster), "clusters\n")
+```
 
+    ## Final panel rows: 30 across 3 clusters
+
+``` r
 panel |>
   mutate(gene = forcats::fct_inorder(gene)) |>
   ggplot(aes(x = cluster, y = gene)) +
@@ -1544,24 +2272,75 @@ panel |>
         plot.subtitle = element_text(size = 9))
 ```
 
-```{r print-panel}
+<img src="figures/integrated-panel-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
+``` r
 cat("\nFinal therapeutic panel: top 10 candidates per cluster:\n\n")
+```
+
+    ## 
+    ## Final therapeutic panel: top 10 candidates per cluster:
+
+``` r
 panel |>
   select(cluster, gene, logFC, q, mean_ess, top_drug, max_phase, panel_score) |>
   mutate(across(c(logFC, q, mean_ess, panel_score), ~ round(., 3))) |>
   print(n = 50)
 ```
 
+    ## # A tibble: 30 × 8
+    ##    cluster gene    logFC     q mean_ess top_drug    max_phase panel_score
+    ##    <chr>   <chr>   <dbl> <dbl>    <dbl> <chr>           <dbl>       <dbl>
+    ##  1 C1      PCNA    1.19      0   -2.96  <NA>               NA       4.24 
+    ##  2 C1      PUF60   0.744     0   -2.92  <NA>               NA       3.18 
+    ##  3 C1      PRPF19  0.64      0   -2.70  <NA>               NA       2.62 
+    ##  4 C1      SF3A3   0.685     0   -2.22  <NA>               NA       1.96 
+    ##  5 C1      SF3A1   0.723     0   -2.00  <NA>               NA       1.72 
+    ##  6 C1      NPM1    0.965     0   -1.12  CRIZOTINIB          4       1.59 
+    ##  7 C1      UBE2I   0.828     0   -1.73  <NA>               NA       1.53 
+    ##  8 C1      ACTL6A  0.763     0   -1.70  <NA>               NA       1.34 
+    ##  9 C1      RBM25   0.747     0   -1.61  <NA>               NA       1.16 
+    ## 10 C1      EFTUD2  0.671     0   -1.72  <NA>               NA       1.16 
+    ## 11 C2      NSF     0.988     0   -2.44  <NA>               NA       2.98 
+    ## 12 C2      PACSIN1 2.54      0    0.039 <NA>               NA       2.63 
+    ## 13 C2      NEFM    2.49      0    0.126 <NA>               NA       2.38 
+    ## 14 C2      PRKCG   1.77      0    0.113 MIDOSTAURIN         4       2.25 
+    ## 15 C2      CAMK2B  1.59      0    0.081 <NA>               NA       2.12 
+    ## 16 C2      NEFL    2.49      0    0.331 <NA>               NA       2.07 
+    ## 17 C2      STXBP1  1.96      0   -0.191 <NA>               NA       1.69 
+    ## 18 C2      VSNL1   2.10      0    0.035 <NA>               NA       1.65 
+    ## 19 C2      STX1B   2.00      0   -0.069 <NA>               NA       1.59 
+    ## 20 C2      TUBB4A  1.85      0   -0.204 <NA>               NA       1.45 
+    ## 21 C3      IL1RAP  1.97      0    0.007 SPESOLIMAB          4       2.11 
+    ## 22 C3      ITGAV   1.34      0   -0.789 ABCIXIMAB           4       1.93 
+    ## 23 C3      SUSD5   2.16      0   -0.018 <NA>               NA       1.86 
+    ## 24 C3      CSPG4   1.98      0   -0.136 <NA>               NA       1.63 
+    ## 25 C3      GRIK3   1.36      0   -0.009 TOPIRAMATE          4       0.772
+    ## 26 C3      RAB3IP  1.65      0   -0.009 <NA>               NA       0.719
+    ## 27 C3      NLGN3   1.64      0   -0.002 <NA>               NA       0.686
+    ## 28 C3      LRP1    1.49      0   -0.118 <NA>               NA       0.514
+    ## 29 C3      RAB31   1.57      0    0.011 <NA>               NA       0.5  
+    ## 30 C3      HIP1    1.52      0   -0.027 <NA>               NA       0.449
 
 ## 15. Molecular Surrogate Classifier
 
-The §10–11 survival arm is descriptive only because the cohort has too few OS events to support a credible per-patient predictive model (rule of thumb: ≥ 10 events per parameter). This section turns the predictive question on its side: rather than predicting survival, we predict molecular outcomes that themselves drive survival and that today require sequencing, WHO grade and the canonical pediatric brain tumour driver flags. With ≈ 100+ patients per outcome class, the events-per-parameter ratio is comfortable and a properly held-out evaluation is honest.
+The §10–11 survival arm is descriptive only because the cohort has too
+few OS events to support a credible per-patient predictive model (rule
+of thumb: ≥ 10 events per parameter). This section turns the predictive
+question on its side: rather than predicting survival, we predict
+molecular outcomes that themselves drive survival and that today require
+sequencing, WHO grade and the canonical pediatric brain tumour driver
+flags. With ≈ 100+ patients per outcome class, the events-per-parameter
+ratio is comfortable and a properly held-out evaluation is honest.
 
-The deliverable is a proteomic surrogate classifier: given a tumour's proteome, predict its grade or driver status. Such a classifier could in principle inform treatment decisions where mutational testing is unavailable, slow, or inconclusive.
+The deliverable is a proteomic surrogate classifier: given a tumour’s
+proteome, predict its grade or driver status. Such a classifier could in
+principle inform treatment decisions where mutational testing is
+unavailable, slow, or inconclusive.
 
 ### 15.1 Define classification targets
 
-```{r classifier-targets}
+``` r
 # Deduplicate to one sample per patient so CV folds don't accidentally split
 # the same patient across train and test (would inflate AUC).
 classifier_data <- cluster_df |>
@@ -1583,16 +2362,44 @@ classifier_data <- cluster_df |>
       levels = c(0, 1), labels = c("None", "AnyDriver")))
 
 cat("Classifier cohort:", nrow(classifier_data), "patients\n")
+```
+
+    ## Classifier cohort: 199 patients
+
+``` r
 cat("Class distributions:\n")
+```
+
+    ## Class distributions:
+
+``` r
 cat("  Grade: "); print(table(classifier_data$grade_bin, useNA = "ifany"))
+```
+
+    ##   Grade:
+
+    ## 
+    ##  LowGrade HighGrade 
+    ##       133        66
+
+``` r
 cat("  Any driver: "); print(table(classifier_data$any_known_driver, useNA = "ifany"))
 ```
 
+    ##   Any driver:
+
+    ## 
+    ##      None AnyDriver 
+    ##       180        19
+
 ### 15.2 Cross-validated logistic-lasso classifier per target
 
-`cv.glmnet` with `family = "binomial"` and `keep = TRUE` returns the out-of-fold linear predictor for every patient, i.e. each patient is scored by a model that was never trained on them. This is the only honest way to assess a high-dimensional classifier on a single cohort.
+`cv.glmnet` with `family = "binomial"` and `keep = TRUE` returns the
+out-of-fold linear predictor for every patient, i.e. each patient is
+scored by a model that was never trained on them. This is the only
+honest way to assess a high-dimensional classifier on a single cohort.
 
-```{r classifier-fit}
+``` r
 fit_classifier <- function(target_var, label) {
   d <- classifier_data |>
     filter(!is.na(.data[[target_var]])) |>
@@ -1622,16 +2429,29 @@ fit_classifier <- function(target_var, label) {
        selected = selected, target_var = target_var)}
 
 clf_grade <- fit_classifier("grade_bin", "WHO grade (High vs Low)")
+```
+
+    ## WHO grade (High vs Low) | n=199 | events(HighGrade)=66 | CV AUC = 0.975 ± 0.010 | selected proteins = 22
+
+``` r
 clf_driver <- fit_classifier("any_known_driver", "Any known driver mutation")
 ```
 
+    ## Any known driver mutation | n=199 | events(AnyDriver)=19 | CV AUC = 1.000 ± 0.000 | selected proteins = 10
+
 **Note**
 
-Only 19 of 199 patients have a known driver mutation. That's a 10:1 class imbalance with n=199. A cross-validated AUC of exactly 1.0 with SE=0.000 in this setting almost certainly means the proteome is partially encoding histological subtype, and the driver flags are also subtype-correlated (e.g. BRAF mutations are concentrated in LGG, which also has a distinctive proteome). The classifier is likely learning subtype, not driver status directly.
+Only 19 of 199 patients have a known driver mutation. That’s a 10:1
+class imbalance with n=199. A cross-validated AUC of exactly 1.0 with
+SE=0.000 in this setting almost certainly means the proteome is
+partially encoding histological subtype, and the driver flags are also
+subtype-correlated (e.g. BRAF mutations are concentrated in LGG, which
+also has a distinctive proteome). The classifier is likely learning
+subtype, not driver status directly.
 
 ### 15.3 ROC curves with held-out predictions
 
-```{r classifier-roc, fig.width=8, fig.height=6}
+``` r
 roc_df <- function(clf) {
   if (is.null(clf)) return(NULL)
   ord <- order(clf$cv_pred, decreasing = TRUE)
@@ -1665,10 +2485,11 @@ if (nrow(roc_combined) > 0) {
           legend.direction = "vertical")}
 ```
 
+<img src="figures/classifier-roc-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
 ### 15.4 Selected proteins per target
 
-```{r classifier-selected}
+``` r
 for (clf in list(clf_grade, clf_driver)) {
   if (is.null(clf)) next
   cat(sprintf("\n%s, %d proteins selected at lambda.min:\n",
@@ -1676,27 +2497,40 @@ for (clf in list(clf_grade, clf_driver)) {
   print(head(clf$selected, 25))}
 ```
 
+    ## 
+    ## WHO grade (High vs Low), 22 proteins selected at lambda.min:
+    ##  [1] "CASP3"   "EHD3"    "EPB41L2" "EPS8L2"  "GGH"     "HUWE1"   "IPO9"   
+    ##  [8] "JMJD6"   "LUC7L"   "OPLAH"   "PDLIM2"  "PSMD2"   "SGTA"    "SMC2"   
+    ## [15] "SORBS3"  "TNS3"    "TRMT6"   "TRMT61A" "UBE2A"   "WDR81"   "XPO5"   
+    ## [22] "YWHAQ"  
+    ## 
+    ## Any known driver mutation, 10 proteins selected at lambda.min:
+    ##  [1] "ISOC1"   "KRT14"   "PACSIN3" "PLCB3"   "RPS27A"  "TRIP6"   "ZNF185" 
+    ##  [8] "DUSP14"  "KRT85"   "RASSF4"
+
 ### 15.5 Limitations
 
-- **Single-cohort.** CV AUC is the most defensible internal estimate, but external validation in a second cohort (PBTA, OpenPedCan, an adult CPTAC release) would be the proper next step before any clinical claim.
-- **Driver-flag definition.** `any_known_driver` collapses six biologically distinct events into one binary label. A multinomial model that predicts driver *type* (BRAF vs H3F3A vs CTNNB1 vs ependymoma fusion) would be the natural extension once cohort size allows.
-- **What this classifier is and is not.** A high-AUC grade classifier is a *biomarker surrogate*, not a treatment-response predictor. The clinical use case is "saves a sequencing test," not "tells you what therapy will work." Therapy selection is what §14 is for.
+- **Single-cohort.** CV AUC is the most defensible internal estimate,
+  but external validation in a second cohort (PBTA, OpenPedCan, an adult
+  CPTAC release) would be the proper next step before any clinical
+  claim.
+- **Driver-flag definition.** `any_known_driver` collapses six
+  biologically distinct events into one binary label. A multinomial
+  model that predicts driver *type* (BRAF vs H3F3A vs CTNNB1 vs
+  ependymoma fusion) would be the natural extension once cohort size
+  allows.
+- **What this classifier is and is not.** A high-AUC grade classifier is
+  a *biomarker surrogate*, not a treatment-response predictor. The
+  clinical use case is “saves a sequencing test,” not “tells you what
+  therapy will work.” Therapy selection is what §14 is for.
 
-
----
-
-  
-```
-
-```
+------------------------------------------------------------------------
 
 ## 16 Protein analysis
 
 ### 16.1 Mapping omics datasets to proteomics sample space
 
-
-```{r mapping}
-
+``` r
 library(data.table)
 
 common_samples <- rownames(prot_imputed)
@@ -1758,9 +2592,23 @@ mut_mat_final <- (mut_mat_final > 0) * 1
 common_samples <- clean_id(common_samples)
 
 cat("Mut samples:", nrow(mut_mat_final), "\n")
-cat("Proteomics samples:", length(common_samples), "\n")
-cat("Intersection:", length(intersect(rownames(mut_mat_final), common_samples)), "\n")
+```
 
+    ## Mut samples: 200
+
+``` r
+cat("Proteomics samples:", length(common_samples), "\n")
+```
+
+    ## Proteomics samples: 218
+
+``` r
+cat("Intersection:", length(intersect(rownames(mut_mat_final), common_samples)), "\n")
+```
+
+    ## Intersection: 200
+
+``` r
 mut_mat_final <- mut_mat_final[
   rownames(mut_mat_final) %in% common_samples,
   ,
@@ -1770,8 +2618,9 @@ mut_mat_final <- mut_mat_final[
 cat("After alignment:", dim(mut_mat_final), "\n")
 ```
 
-```{r mapping_other}
+    ## After alignment: 200 4786
 
+``` r
 # CNV Discrete
 cnv_disc_raw <- read.delim(file.path(DATA_DIR, "data_cna.txt"), check.names = FALSE)
 
@@ -1832,12 +2681,11 @@ rna_mat <- rna_mat[rownames(rna_mat) %in% common_samples, , drop = FALSE]
 
 rna_log2 <- log2(rna_mat + 1)
 rna_z <- scale(rna_log2)
-
 ```
 
 ### 16.2 Mutation enrichment per cluster
 
-```{r mutation-enrichment}
+``` r
 mut_mat <- as.matrix(mut_mat_final)
 cl_vec <- cluster_labels[rownames(mut_mat)]
 
@@ -1877,11 +2725,11 @@ for (g in colnames(mut_mat)) {
 
 mut_enrichment <- do.call(rbind, mut_enrichment)
 mut_enrichment$q <- p.adjust(mut_enrichment$p, method = "BH")
-
 ```
 
 ### 16.3 CNV PCA
-```{r cnv-pca}
+
+``` r
 cnv_log2_clean <- cnv_log2
 cnv_log2_clean <- cnv_log2_clean[, colSums(is.na(cnv_log2_clean)) < nrow(cnv_log2_clean)]
 
@@ -1889,8 +2737,17 @@ cnv_var <- apply(cnv_log2_clean, 2, function(x) var(x, na.rm = TRUE))
 cnv_log2_clean <- cnv_log2_clean[, cnv_var > 0]
 
 cat("CNV before:", dim(cnv_log2), "\n")
-cat("CNV after cleaning:", dim(cnv_log2_clean), "\n")
+```
 
+    ## CNV before: 190 19354
+
+``` r
+cat("CNV after cleaning:", dim(cnv_log2_clean), "\n")
+```
+
+    ## CNV after cleaning: 190 19348
+
+``` r
 # PCA
 for (j in seq_len(ncol(cnv_log2_clean))) {
   col <- cnv_log2_clean[, j]
@@ -1908,9 +2765,11 @@ ggplot(cnv_df, aes(PC1, PC2, colour = cluster)) +
   labs(title = "CNV log2 structure across clusters")
 ```
 
-### 16.4 CNV–protein correlation
-```{r cnv-protein-correlation}
+<img src="figures/cnv-pca-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
+### 16.4 CNV–protein correlation
+
+``` r
 common_samples <- intersect(
   rownames(cnv_log2),
   rownames(prot_imputed)
@@ -1920,14 +2779,22 @@ cnv_aligned <- cnv_log2[common_samples, , drop = FALSE]
 prot_aligned <- prot_imputed[common_samples, , drop = FALSE]
 
 cat("Aligned samples:", length(common_samples), "\n")
+```
 
+    ## Aligned samples: 190
+
+``` r
 common_genes <- intersect(
   colnames(cnv_aligned),
   colnames(prot_aligned)
 )
 
 cat("Shared genes:", length(common_genes), "\n")
+```
 
+    ## Shared genes: 6365
+
+``` r
 # CORRELATION
 cnv_prot_cor <- numeric(length(common_genes))
 names(cnv_prot_cor) <- common_genes
@@ -1950,12 +2817,13 @@ ggplot(cnv_prot_cor_df, aes(x = cor)) +
   geom_histogram(bins = 50) +
   theme_bw() +
   labs(title = "CNV–Protein correlation")
-
 ```
 
-### 16.5 Discrete CNV enrichment
-```{r cnv-discrete}
+<img src="figures/cnv-protein-correlation-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
+### 16.5 Discrete CNV enrichment
+
+``` r
 cnv_disc_long <- as.data.frame(cnv_disc)
 cnv_disc_long$sample_id <- rownames(cnv_disc)
 
@@ -1975,12 +2843,11 @@ cnv_enrich <- aggregate(
   data = cnv_disc_long,
   FUN = function(x) length(x)
 )
-
 ```
 
 ### 16.6 RNA PCA
-```{r rna-pca}
 
+``` r
 rna_pca <- prcomp(rna_z, scale. = FALSE)
 
 rna_df <- as.data.frame(rna_pca$x[, 1:5])
@@ -1990,13 +2857,13 @@ ggplot(rna_df, aes(PC1, PC2, colour = cluster)) +
   geom_point(size = 2) +
   theme_bw() +
   labs(title = "RNA expression structure")
-
 ```
 
+<img src="figures/rna-pca-1.png" alt="" width="100%" style="display: block; margin: auto;" />
+
 ### 16.7 RNA–protein correlation
-```{r rna-protein-correlation}
 
-
+``` r
 common_samples <- intersect(
   rownames(rna_z),
   rownames(prot_imputed)
@@ -2008,14 +2875,22 @@ prot_aligned <- prot_imputed[common_samples, , drop = FALSE]
 stopifnot(identical(rownames(rna_aligned), rownames(prot_aligned)))
 
 cat("Aligned samples:", length(common_samples), "\n")
+```
 
+    ## Aligned samples: 188
+
+``` r
 shared_genes <- intersect(
   colnames(rna_aligned),
   colnames(prot_aligned)
 )
 
 cat("Shared genes:", length(shared_genes), "\n")
+```
 
+    ## Shared genes: 6171
+
+``` r
 # CORRELATION
 rna_prot_cor <- numeric(length(shared_genes))
 names(rna_prot_cor) <- shared_genes
@@ -2034,12 +2909,13 @@ hist(
   main = "RNA–Protein correlation",
   xlab = "Spearman correlation"
 )
-
 ```
 
-### 16.8 RNA differential expression
-```{r rna-de}
+<img src="figures/rna-protein-correlation-1.png" alt="" width="100%" style="display: block; margin: auto;" />
 
+### 16.8 RNA differential expression
+
+``` r
 rna_common <- intersect(rownames(rna_z), names(cluster_labels))
 rna_cl <- rna_z[rna_common, ]
 cl_vec <- cluster_labels[rna_common]
@@ -2067,8 +2943,8 @@ rna_de_all <- do.call(rbind, rna_de)
 ```
 
 ### 16.9 Multi-omics survival model
-```{r multi-omics-survival}
 
+``` r
 mut_burden <- rowSums(mut_mat)
 cnv_instability <- rowMeans(abs(cnv_disc), na.rm = TRUE)
 
@@ -2089,24 +2965,77 @@ cox_multi <- coxph(
 summary(cox_multi)
 ```
 
+    ## Call:
+    ## coxph(formula = Surv(os_months, os_event) ~ cluster + mut_burden + 
+    ##     cnv_instability + age, data = surv_multi)
+    ## 
+    ##   n= 184, number of events= 36 
+    ##    (27 observations deleted due to missingness)
+    ## 
+    ##                       coef  exp(coef)   se(coef)      z Pr(>|z|)    
+    ## cluster         -1.146e+00  3.180e-01  3.178e-01 -3.606 0.000311 ***
+    ## mut_burden       6.444e-03  1.006e+00  2.691e-03  2.395 0.016627 *  
+    ## cnv_instability  8.576e-01  2.358e+00  5.476e-01  1.566 0.117291    
+    ## age              8.083e-05  1.000e+00  7.248e-05  1.115 0.264747    
+    ## ---
+    ## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+    ## 
+    ##                 exp(coef) exp(-coef) lower .95 upper .95
+    ## cluster             0.318     3.1448    0.1706    0.5928
+    ## mut_burden          1.006     0.9936    1.0012    1.0118
+    ## cnv_instability     2.358     0.4242    0.8061    6.8956
+    ## age                 1.000     0.9999    0.9999    1.0002
+    ## 
+    ## Concordance= 0.764  (se = 0.041 )
+    ## Likelihood ratio test= 33.82  on 4 df,   p=8e-07
+    ## Wald test            = 28.52  on 4 df,   p=1e-05
+    ## Score (logrank) test = 34.14  on 4 df,   p=7e-07
+
 ### 16.10 Limitations
 
-- **Single-cohort.** CV AUC is the most defensible internal estimate, but external validation in a second cohort (PBTA, OpenPedCan, an adult CPTAC release) would be the proper next step before any clinical claim.
-- **Driver-flag definition.** `any_known_driver` collapses six biologically distinct events into one binary label. A multinomial model that predicts driver *type* (BRAF vs H3F3A vs CTNNB1 vs ependymoma fusion) would be the natural extension once cohort size allows.
-- **What this classifier is and is not.** A high-AUC grade classifier is a *biomarker surrogate*, not a treatment-response predictor. The clinical use case is "saves a sequencing test," not "tells you what therapy will work." Therapy selection is what §14 is for.
+- **Single-cohort.** CV AUC is the most defensible internal estimate,
+  but external validation in a second cohort (PBTA, OpenPedCan, an adult
+  CPTAC release) would be the proper next step before any clinical
+  claim.
+- **Driver-flag definition.** `any_known_driver` collapses six
+  biologically distinct events into one binary label. A multinomial
+  model that predicts driver *type* (BRAF vs H3F3A vs CTNNB1 vs
+  ependymoma fusion) would be the natural extension once cohort size
+  allows.
+- **What this classifier is and is not.** A high-AUC grade classifier is
+  a *biomarker surrogate*, not a treatment-response predictor. The
+  clinical use case is “saves a sequencing test,” not “tells you what
+  therapy will work.” Therapy selection is what §14 is for.
 
-
----
+------------------------------------------------------------------------
 
 ## References
 
-- Petralia F. et al. (2020) "Integrated Proteogenomic Characterization across Major Histological Types of Pediatric Brain Cancer." **Cell** 183(7), 1962–1985.e31. doi:10.1016/j.cell.2020.10.044
-- Hofree M. et al. (2013) "Network-based stratification of tumour mutations." **Nature Methods** 10, 1108–1115.
-- Monti S. et al. (2003) *Consensus Clustering.* **Machine Learning** 52, 91–118.
-- Cerami E. et al. (2012) *The cBio Cancer Genomics Portal.* **Cancer Discovery** 2, 401–404.
-- Ishwaran H. et al. (2008) "Random survival forests." **Annals of Applied Statistics** 2, 841–860.
-- Casado P. et al. (2013) "Kinase-substrate enrichment analysis provides insights into the heterogeneity of signaling pathway activation in leukemia cells." **Science Signaling** 6(268), rs6. doi:10.1126/scisignal.2003573 — *KSEA methodology used in §14.2.*
-- Türei D. et al. (2016) "OmniPath: guidelines and gateway for literature-curated signaling pathway resources." **Nature Methods** 13, 966–967. — *Kinase–substrate annotations used in §14.2.*
-- Tsherniak A. et al. (2017) "Defining a Cancer Dependency Map." **Cell** 170(3), 564–576.e16. doi:10.1016/j.cell.2017.06.010 — *DepMap CRISPR essentiality used in §14.4.*
-- Ochoa D. et al. (2023) "The next-generation Open Targets Platform: reimagined, redesigned, rebuilt." **Nucleic Acids Research** 51(D1), D1353–D1359. — *Druggability evidence used in §14.5.*
-- Friedman J., Hastie T., Tibshirani R. (2010) "Regularization paths for generalized linear models via coordinate descent." **Journal of Statistical Software** 33(1), 1–22. — *`glmnet` cross-validated lasso classifier used in §15.*
+- Petralia F. et al. (2020) “Integrated Proteogenomic Characterization
+  across Major Histological Types of Pediatric Brain Cancer.” **Cell**
+  183(7), 1962–1985.e31. <doi:10.1016/j.cell.2020.10.044>
+- Hofree M. et al. (2013) “Network-based stratification of tumour
+  mutations.” **Nature Methods** 10, 1108–1115.
+- Monti S. et al. (2003) *Consensus Clustering.* **Machine Learning**
+  52, 91–118.
+- Cerami E. et al. (2012) *The cBio Cancer Genomics Portal.* **Cancer
+  Discovery** 2, 401–404.
+- Ishwaran H. et al. (2008) “Random survival forests.” **Annals of
+  Applied Statistics** 2, 841–860.
+- Casado P. et al. (2013) “Kinase-substrate enrichment analysis provides
+  insights into the heterogeneity of signaling pathway activation in
+  leukemia cells.” **Science Signaling** 6(268), rs6.
+  <doi:10.1126/scisignal.2003573> — *KSEA methodology used in §14.2.*
+- Türei D. et al. (2016) “OmniPath: guidelines and gateway for
+  literature-curated signaling pathway resources.” **Nature Methods**
+  13, 966–967. — *Kinase–substrate annotations used in §14.2.*
+- Tsherniak A. et al. (2017) “Defining a Cancer Dependency Map.”
+  **Cell** 170(3), 564–576.e16. <doi:10.1016/j.cell.2017.06.010> —
+  *DepMap CRISPR essentiality used in §14.4.*
+- Ochoa D. et al. (2023) “The next-generation Open Targets Platform:
+  reimagined, redesigned, rebuilt.” **Nucleic Acids Research** 51(D1),
+  D1353–D1359. — *Druggability evidence used in §14.5.*
+- Friedman J., Hastie T., Tibshirani R. (2010) “Regularization paths for
+  generalized linear models via coordinate descent.” **Journal of
+  Statistical Software** 33(1), 1–22. — *`glmnet` cross-validated lasso
+  classifier used in §15.*
