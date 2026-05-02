@@ -1,7 +1,7 @@
 Proteomics-Based Patient Stratification, and Therapeutic Target
 Discovery in Pediatric Brain Tumours
 ================
-2026-04-29
+2026-05-02
 
 - [Overview](#overview)
   - [Data files used from
@@ -760,7 +760,7 @@ tune_splsda$choice.keepX
 ```
 
     ## comp1 comp2 comp3 
-    ##    50    15    15
+    ##    25    15    30
 
 ``` r
 # mixOmics' plot.tune.splsda returns a ggplot, so add the title via ggtitle()
@@ -906,7 +906,7 @@ cat("Metrics across k:\n"); print(k_metrics)
     ##       k cophenetic dispersion silhouette     rss
     ##   <dbl>      <dbl>      <dbl>      <dbl>   <dbl>
     ## 1     2      0.875      0.411      0.660 219221.
-    ## 2     3      0.892      0.567      0.684 151875.
+    ## 2     3      0.896      0.567      0.695 151875.
     ## 3     4      0.852      0.483      0.506 119961.
     ## 4     5      0.807      0.485      0.388  91029.
     ## 5     6      0.846      0.557      0.400  77961.
@@ -1005,7 +1005,7 @@ if (exists("k_metrics")) {
 }
 ```
 
-    ## Data-driven k = 3  (silhouette = 0.684, cophenetic = 0.892)
+    ## Data-driven k = 3  (silhouette = 0.695, cophenetic = 0.896)
 
 ------------------------------------------------------------------------
 
@@ -1033,10 +1033,10 @@ nmf_best <- nmf(
   .options = "vr")
 ```
 
-    ## Runs: |                                                        Runs: |                                                  |   0%Runs: |                                                        Runs: |==                                                |   5%Runs: |                                                        Runs: |=====                                             |  10%Runs: |                                                        Runs: |                                                        Runs: |==========                                        |  19%Runs: |==========                                        |  19%Runs: |                                                        Runs: |==============                                    |  29%Runs: |                                                        Runs: |===================                               |  38%Runs: |                                                        Runs: |========================                          |  48%Runs: |                                                        Runs: |=============================                     |  57%Runs: |                                                        Runs: |=================================                 |  67%Runs: |                                                        Runs: |======================================            |  76%Runs: |                                                        Runs: |===========================================       |  86%Runs: |                                                        Runs: |================================================  |  95%Runs: |                                                        Runs: |==================================================| 100%
+    ## Runs: |                                                        Runs: |                                                  |   0%Runs: |                                                        Runs: |==================================================| 100%
     ## System time:
     ##    user  system elapsed 
-    ##  22.798  35.669  38.039
+    ##    3.29    0.12    7.75
 
 ``` r
 # Extract consensus matrix
@@ -1947,10 +1947,12 @@ print(marker_panel |> count(cluster, name = "n_candidates"))
 Cross-reference the cluster-marker shortlist with CRISPR essentiality
 scores from DepMap, restricted to brain/CNS cell lines. A gene that is
 both upregulated in a cluster AND broadly essential in brain lines is a
-strong candidate for therapeutic inhibition.
+strong candidate for therapeutic inhibition. Link to download the file
+data:
+Download\[<https://depmap.org/portal/download/api/download?file_name=downloads-by-canonical-id%2F26q1-public-3b44.1%2FCRISPRGeneEffect.csv&dl_name=CRISPRGeneEffect.csv&bucket=depmap-external-downloads>\]
 
 ``` r
-# Local DepMap files downloaded from https://depmap.org/portal/download/all/
+# Local DepMap files downloaded from link above
 # CRISPRGeneEffect.csv: Chronos gene effect scores (cell lines × genes)
 # Model.csv: cell line metadata (ModelID, OncotreeLineage, OncotreePrimaryDisease)
 DEPMAP_CRISPR <- "./data/CRISPRGeneEffect.csv"
