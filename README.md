@@ -1,4 +1,4 @@
-# Proteomics-Based Patient Stratification and Therapeutic Target Discovery in Pediatric Brain Tumours
+# Proteomics-Based Therapeutic Target Discovery in Pediatric Brain Tumours
 
 **Dataset:** CPTAC/CHOP Brain Cancer Cohort (`brain_cptac_2020`) [cBioPortal](https://www.cbioportal.org/study/summary?id=brain_cptac_2020)
 
