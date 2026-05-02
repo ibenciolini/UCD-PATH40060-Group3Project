@@ -1317,10 +1317,11 @@ print(marker_panel |> count(cluster, name = "n_candidates"))
 
 ### 14.4 DepMap brain-line dependency
 
-Cross-reference the cluster-marker shortlist with CRISPR essentiality scores from DepMap, restricted to brain/CNS cell lines. A gene that is both upregulated in a cluster AND broadly essential in brain lines is a strong candidate for therapeutic inhibition.
+Cross-reference the cluster-marker shortlist with CRISPR essentiality scores from DepMap, restricted to brain/CNS cell lines. A gene that is both upregulated in a cluster AND broadly essential in brain lines is a strong candidate for therapeutic inhibition. Link to download the file data: CRISPRGeneEffect.csv[https://depmap.org/portal/download/api/download?file_name=downloads-by-canonical-id%2F26q1-public-3b44.1%2FCRISPRGeneEffect.csv&dl_name=CRISPRGeneEffect.csv&bucket=depmap-external-downloads]
+
 
 ```{r depmap, fig.width=10, fig.height=6}
-# Local DepMap files downloaded from https://depmap.org/portal/download/all/
+# Local DepMap files downloaded from link above
 # CRISPRGeneEffect.csv: Chronos gene effect scores (cell lines × genes)
 # Model.csv: cell line metadata (ModelID, OncotreeLineage, OncotreePrimaryDisease)
 DEPMAP_CRISPR <- "./data/CRISPRGeneEffect.csv"
